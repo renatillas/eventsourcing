@@ -34,7 +34,7 @@ pub type EventStore(eventstore, entity, command, event, error) {
       List(event),
       Dict(String, String),
     ) ->
-      Nil,
+      List(EventEnvelop(event)),
   )
 }
 
@@ -86,12 +86,15 @@ pub fn execute(
 
   use events <- result.map(aggregate.handle(entity, command))
   events |> list.map(aggregate.apply(entity, _))
-  event_sourcing.event_store.commit(
-    event_sourcing.event_store.eventstore,
-    aggregate_context,
-    events,
-    dict.new(),
-  )
+  let commited_events =
+    event_sourcing.event_store.commit(
+      event_sourcing.event_store.eventstore,
+      aggregate_context,
+      events,
+      dict.new(),
+    )
+  event_sourcing.queries
+  |> list.map(fn(query) { query(aggregate_id, commited_events) })
   Nil
 }
 
