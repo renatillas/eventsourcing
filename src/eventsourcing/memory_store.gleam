@@ -1,6 +1,7 @@
 import eventsourcing
 import gleam/dict.{type Dict}
 import gleam/erlang/process
+import gleam/int
 import gleam/io
 import gleam/list
 import gleam/otp/actor
@@ -65,15 +66,25 @@ fn handle_message(message: Message(event), state: State(event)) {
   }
 }
 
-fn load_commited_events(
+pub fn load_commited_events(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) {
   actor.call(memory_store.subject, Get(aggregate_id, _), 10_000)
   |> result.unwrap([])
+  |> fn(events) {
+    io.println(
+      "loading: "
+      <> events |> list.length |> int.to_string
+      <> " events for Aggregate ID '"
+      <> aggregate_id
+      <> "'",
+    )
+    events
+  }
 }
 
-fn load_aggregate(
+pub fn load_aggregate(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) -> eventsourcing.AggregateContext(entity, command, event, error) {
@@ -111,10 +122,16 @@ fn commit(
     context
   let wrapped_events = wrap_events(aggregate_id, sequence, events, metadata)
   let past_events = load_commited_events(memory_store, aggregate_id)
-  let events =
-    list.append(wrapped_events, past_events)
-    |> io.debug
+  let events = list.append(wrapped_events, past_events)
+  io.println(
+    "storing: "
+    <> wrapped_events |> list.length |> int.to_string
+    <> " events for Aggregate ID '"
+    <> aggregate_id
+    <> "'",
+  )
   actor.send(memory_store.subject, Set(aggregate_id, events))
+  wrapped_events
 }
 
 fn wrap_events(
