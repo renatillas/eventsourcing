@@ -66,19 +66,12 @@ fn handle_message(message: Message(event), state: State(event)) {
   }
 }
 
-fn load_commited_events(
+pub fn load_commited_events(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) {
   actor.call(memory_store.subject, Get(aggregate_id, _), 10_000)
   |> result.unwrap([])
-}
-
-pub fn load_events(
-  memory_store: MemoryStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) {
-  load_commited_events(memory_store, aggregate_id)
   |> fn(events) {
     io.println(
       "loading: "
@@ -95,7 +88,7 @@ pub fn load_aggregate(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) -> eventsourcing.AggregateContext(entity, command, event, error) {
-  let commited_events = load_events(memory_store, aggregate_id)
+  let commited_events = load_commited_events(memory_store, aggregate_id)
 
   let #(aggregate, sequence) =
     list.fold(
