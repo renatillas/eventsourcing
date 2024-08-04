@@ -7,6 +7,37 @@ import gleam/pair
 import gleam/pgo
 import gleam/result
 
+// CONSTANTS ----
+
+const insert_event_query = "
+  INSERT INTO event 
+  (aggregate_type, aggregate_id, sequence, event_type, event_version, payload)
+  VALUES 
+  ($1, $2, $3, $4, $5, $6)
+  "
+
+const select_events_query = "
+  SELECT aggregate_type, aggregate_id, sequence, event_type, event_version, payload
+  FROM event
+  WHERE aggregate_type = $1 AND aggregate_id = $2
+  ORDER BY sequence
+  "
+
+const create_event_table_query = "
+  CREATE TABLE IF NOT EXISTS event
+  (
+    aggregate_type text                         NOT NULL,
+    aggregate_id   text                         NOT NULL,
+    sequence       bigint CHECK (sequence >= 0) NOT NULL,
+    event_type     text                         NOT NULL,
+    event_version  text                         NOT NULL,
+    payload        text                         NOT NULL,
+    PRIMARY KEY (aggregate_type, aggregate_id, sequence)
+  );
+  "
+
+// TYPES ----
+
 pub opaque type PostgresStore(entity, command, event, error) {
   PostgresStore(
     db: pgo.Connection,
@@ -18,6 +49,8 @@ pub opaque type PostgresStore(entity, command, event, error) {
     aggregate_type: String,
   )
 }
+
+// CONSTRUCTORS ----
 
 pub fn new(
   pgo_config pgo_config: pgo.Config,
@@ -35,6 +68,12 @@ pub fn new(
   event_type event_type: String,
   event_version event_version: String,
   aggregate_type aggregate_type: String,
+) -> eventsourcing.EventStore(
+  PostgresStore(entity, command, event, error),
+  entity,
+  command,
+  event,
+  error,
 ) {
   let db = pgo.connect(pgo_config)
 
@@ -56,11 +95,47 @@ pub fn new(
   )
 }
 
+pub fn create_event_table(
+  postgres_store: PostgresStore(entity, command, event, error),
+) -> Result(pgo.Returned(dynamic.Dynamic), pgo.QueryError) {
+  pgo.execute(
+    query: create_event_table_query,
+    on: postgres_store.db,
+    with: [],
+    expecting: dynamic.dynamic,
+  )
+}
+
 pub fn load_aggregate_entity(
   postgres_store: PostgresStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) -> entity {
   load_aggregate(postgres_store, aggregate_id).aggregate.entity
+}
+
+pub fn load_events(
+  postgres_store: PostgresStore(entity, command, event, error),
+  aggregate_id: eventsourcing.AggregateId,
+) -> Result(List(eventsourcing.EventEnvelop(event)), pgo.QueryError) {
+  use resulted <- result.map(pgo.execute(
+    select_events_query,
+    on: postgres_store.db,
+    with: [pgo.text(postgres_store.aggregate_type), pgo.text(aggregate_id)],
+    expecting: dynamic.decode6(
+      eventsourcing.SerializedEventEnvelop,
+      dynamic.element(1, dynamic.string),
+      dynamic.element(2, dynamic.int),
+      dynamic.element(5, fn(dyn) {
+        let assert Ok(payload) =
+          dynamic.string(dyn) |> result.map(postgres_store.event_decoder)
+        payload
+      }),
+      dynamic.element(3, dynamic.string),
+      dynamic.element(4, dynamic.string),
+      dynamic.element(0, dynamic.string),
+    ),
+  ))
+  resulted.rows
 }
 
 fn load_aggregate(
@@ -85,31 +160,6 @@ fn load_aggregate(
       },
     )
   eventsourcing.AggregateContext(aggregate_id:, aggregate:, sequence:)
-}
-
-pub fn load_events(
-  postgres_store: PostgresStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) -> Result(List(eventsourcing.EventEnvelop(event)), pgo.QueryError) {
-  use resulted <- result.map(pgo.execute(
-    select_events(),
-    on: postgres_store.db,
-    with: [pgo.text(postgres_store.aggregate_type), pgo.text(aggregate_id)],
-    expecting: dynamic.decode6(
-      eventsourcing.SerializedEventEnvelop,
-      dynamic.element(1, dynamic.string),
-      dynamic.element(2, dynamic.int),
-      dynamic.element(5, fn(dyn) {
-        let assert Ok(payload) =
-          dynamic.string(dyn) |> result.map(postgres_store.event_decoder)
-        payload
-      }),
-      dynamic.element(3, dynamic.string),
-      dynamic.element(4, dynamic.string),
-      dynamic.element(0, dynamic.string),
-    ),
-  ))
-  resulted.rows
 }
 
 fn commit(
@@ -174,7 +224,7 @@ fn persist_events(
     ) = event
 
     pgo.execute(
-      query: insert_event(),
+      query: insert_event_query,
       on: postgres_store.db,
       with: [
         pgo.text(aggregate_type),
@@ -187,22 +237,4 @@ fn persist_events(
       expecting: dynamic.dynamic,
     )
   })
-}
-
-fn insert_event() {
-  "
-    INSERT INTO event 
-    (aggregate_type, aggregate_id, sequence, event_type, event_version, payload)
-    VALUES 
-    ($1, $2, $3, $4, $5, $6)
-    "
-}
-
-fn select_events() {
-  "
-  SELECT aggregate_type, aggregate_id, sequence, event_type, event_version, payload
-  FROM event
-  WHERE aggregate_type = $1 AND aggregate_id = $2
-  ORDER BY sequence
-  "
 }
