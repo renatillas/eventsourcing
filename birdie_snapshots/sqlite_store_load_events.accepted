@@ -1,0 +1,32 @@
+---
+version: 1.1.8
+title: sqlite store load events
+file: ./test/sqlite_store_test.gleam
+test_name: sqlite_store_load_events_test
+---
+[
+  SerializedEventEnvelop(
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    1,
+    AccountOpened("92085b42-032c-4d7a-84de-a86d67123858"),
+    "BankAccountEvent",
+    "1.0",
+    "BankAccount",
+  ),
+  SerializedEventEnvelop(
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    2,
+    CustomerDepositedCash(10.0, 10.0),
+    "BankAccountEvent",
+    "1.0",
+    "BankAccount",
+  ),
+  SerializedEventEnvelop(
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    3,
+    CustomerWithdrewCash(5.99, 4.01),
+    "BankAccountEvent",
+    "1.0",
+    "BankAccount",
+  ),
+]
