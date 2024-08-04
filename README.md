@@ -78,8 +78,6 @@ pub fn aggregate_type() -> String {
 }
 
 
-// 
-
 pub fn main() {
   let postgres_store =
     postgres_store.new(
