@@ -56,10 +56,17 @@ pub fn new(
   )
 }
 
-pub fn load_aggregate(
+pub fn load_aggregate_entity(
   postgres_store: PostgresStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
-) {
+) -> entity {
+  load_aggregate(postgres_store, aggregate_id).aggregate.entity
+}
+
+fn load_aggregate(
+  postgres_store: PostgresStore(entity, command, event, error),
+  aggregate_id: eventsourcing.AggregateId,
+) -> eventsourcing.AggregateContext(entity, command, event, error) {
   let assert Ok(commited_events) = load_events(postgres_store, aggregate_id)
 
   let #(aggregate, sequence) =
@@ -83,7 +90,7 @@ pub fn load_aggregate(
 pub fn load_events(
   postgres_store: PostgresStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
-) {
+) -> Result(List(eventsourcing.EventEnvelop(event)), pgo.QueryError) {
   use resulted <- result.map(pgo.execute(
     select_events(),
     on: postgres_store.db,
