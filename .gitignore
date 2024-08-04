@@ -3,4 +3,3 @@
 /build
 erl_crash.dump
 src/main.gleam
-/birdie_snapshots
