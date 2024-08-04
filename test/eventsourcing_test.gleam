@@ -2,8 +2,14 @@ import birdie
 import decode
 import eventsourcing
 import eventsourcing/memory_store
+import eventsourcing/postgres_store
 import gleam/dynamic
+import gleam/int
+import gleam/io
 import gleam/json
+import gleam/list
+import gleam/option
+import gleam/pgo
 import gleam/result
 import gleeunit
 import gleeunit/should
@@ -16,7 +22,19 @@ pub fn main() {
 pub fn memory_store_execute_open_account_test() {
   let mem_store =
     memory_store.new(BankAccount(opened: False, balance: 0.0), handle, apply)
-  let event_sourcing = eventsourcing.new(mem_store, [])
+  let query = fn(
+    aggregate_id: String,
+    events: List(eventsourcing.EventEnvelop(BankAccountEvent)),
+  ) {
+    io.println(
+      "Aggregate Bank Account with ID: "
+      <> aggregate_id
+      <> " commited "
+      <> events |> list.length |> int.to_string
+      <> " events.",
+    )
+  }
+  let event_sourcing = eventsourcing.new(mem_store, [query])
   eventsourcing.execute(
     event_sourcing,
     "92085b42-032c-4d7a-84de-a86d67123858",
@@ -25,8 +43,44 @@ pub fn memory_store_execute_open_account_test() {
   |> should.be_ok
   |> should.equal(Nil)
 
-  memory_store.load_aggregate(
+  memory_store.load_aggregate_entity(
     mem_store.eventstore,
+    "92085b42-032c-4d7a-84de-a86d67123858",
+  )
+  |> pprint.format
+  |> birdie.snap(title: "memory store open account")
+}
+
+pub fn postgres_store_execute_open_account_test() {
+  let postgres_store =
+    postgres_store.new(
+      pgo_config: pgo.Config(
+        ..pgo.default_config(),
+        host: "localhost",
+        database: "postgres",
+        pool_size: 15,
+        password: option.Some("postgres"),
+      ),
+      emtpy_entity: BankAccount(opened: False, balance: 0.0),
+      handle_command_function: handle,
+      apply_function: apply,
+      event_encoder: encode_event,
+      event_decoder: decode_event,
+      event_type: event_type(),
+      event_version: "1",
+      aggregate_type: aggregate_type(),
+    )
+  let event_sourcing = eventsourcing.new(postgres_store, [])
+  eventsourcing.execute(
+    event_sourcing,
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    OpenAccount("92085b42-032c-4d7a-84de-a86d67123858"),
+  )
+  |> should.be_ok
+  |> should.equal(Nil)
+
+  postgres_store.load_aggregate(
+    postgres_store.eventstore,
     "92085b42-032c-4d7a-84de-a86d67123858",
   ).aggregate.entity
   |> pprint.format

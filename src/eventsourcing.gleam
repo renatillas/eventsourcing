@@ -1,10 +1,37 @@
 import gleam/list
 import gleam/result
 
+/// Used by the EventStore implementations
+pub type Aggregate(entity, command, event, error) {
+  Aggregate(
+    entity: entity,
+    handle: Handle(entity, command, event, error),
+    apply: Apply(entity, event),
+  )
+}
+
+/// Used by the EventStore implementations
+pub type AggregateContext(entity, command, event, error) {
+  AggregateContext(
+    aggregate_id: AggregateId,
+    aggregate: Aggregate(entity, command, event, error),
+    sequence: Int,
+  )
+}
+
 type AggregateId =
   String
 
-pub type EventSourcing(
+type Handle(entity, command, event, error) =
+  fn(entity, command) -> Result(List(event), error)
+
+type Apply(entity, event) =
+  fn(entity, event) -> entity
+
+type Query(event) =
+  fn(AggregateId, List(EventEnvelop(event))) -> Nil
+
+pub opaque type EventSourcing(
   eventstore,
   entity,
   command,
@@ -18,10 +45,7 @@ pub type EventSourcing(
   )
 }
 
-pub fn new(event_store, queries) {
-  EventSourcing(event_store:, queries:)
-}
-
+/// Wrapper around the event store implementations
 pub type EventStore(eventstore, entity, command, event, error) {
   EventStore(
     eventstore: eventstore,
@@ -36,32 +60,83 @@ pub type EventStore(eventstore, entity, command, event, error) {
   )
 }
 
-pub type AggregateContext(entity, command, event, error) {
-  AggregateContext(
-    aggregate_id: AggregateId,
-    aggregate: Aggregate(entity, command, event, error),
-    sequence: Int,
-  )
+/// Create a new EventSourcing instance providing 
+/// an Event Store and a list of queries you want
+/// run whenever events are commited.
+///
+/// # Examples
+/// ```gleam
+/// pub type BankAccount {
+///   BankAccount(opened: Bool, balance: Float)
+/// }
+///
+/// pub type BankAccountCommand {
+///   OpenAccount(account_id: String)
+///   DepositMoney(amount: Float)
+///   WithDrawMoney(amount: Float)
+/// }
+///
+/// pub type BankAccountEvent {
+///   AccountOpened(account_id: String)
+///   CustomerDepositedCash(amount: Float, balance: Float)
+///   CustomerWithdrewCash(amount: Float, balance: Float)
+/// }
+///
+/// pub fn handle(
+///   bank_account: BankAccount,
+///   command: BankAccountCommand,
+/// ) -> Result(List(BankAccountEvent), Nil) {
+///   case command {
+///     OpenAccount(account_id) -> Ok([AccountOpened(account_id)])
+///     DepositMoney(amount) -> {
+///       let balance = bank_account.balance +. amount
+///       case amount >. 0.0 {
+///         True -> Ok([CustomerDepositedCash(amount:, balance:)])
+///         False -> Error(Nil)
+///       }
+///     }
+///     WithDrawMoney(amount) -> {
+///       let balance = bank_account.balance -. amount
+///       case amount >. 0.0 && balance >. 0.0 {
+///         True -> Ok([CustomerWithdrewCash(amount:, balance:)])
+///         False -> Error(Nil)
+///       }
+///     }
+///   }
+/// }
+/// 
+/// pub fn apply(bank_account: BankAccount, event: BankAccountEvent) {
+///   case event {
+///     AccountOpened(_) -> BankAccount(..bank_account, opened: True)
+///     CustomerDepositedCash(_, balance) -> BankAccount(..bank_account, balance:)
+///     CustomerWithdrewCash(_, balance) -> BankAccount(..bank_account, balance:)
+///   }
+/// }
+/// fn main() {
+///   let mem_store =
+///     memory_store.new(BankAccount(opened: False, balance: 0.0), handle, apply)
+///   let query = fn(
+///     aggregate_id: String,
+///     events: List(eventsourcing.EventEnvelop(BankAccountEvent)),
+///   ) {
+///     io.println(
+///       "Aggregate Bank Account with ID: "
+///       <> aggregate_id
+///       <> " commited "
+///       <> events |> list.length |> int.to_string
+///       <> " events.",
+///     )
+///   }
+///   let event_sourcing = eventsourcing.new(mem_store, [query])
+/// }
+/// ```
+pub fn new(event_store, queries) {
+  EventSourcing(event_store:, queries:)
 }
 
-/// Aggregate
-type Handle(entity, command, event, error) =
-  fn(entity, command) -> Result(List(event), error)
-
-type Apply(entity, event) =
-  fn(entity, event) -> entity
-
-type Query(event) =
-  fn(AggregateId, List(EventEnvelop(event))) -> Nil
-
-pub type Aggregate(entity, command, event, error) {
-  Aggregate(
-    entity: entity,
-    handle: Handle(entity, command, event, error),
-    apply: Apply(entity, event),
-  )
-}
-
+/// The main function of the package. 
+/// Run execute with your event_sourcing instance and the command you want to apply.
+/// It will return a Result with Ok(Nil) or Error(your domain error) if the command failed.
 pub fn execute(
   event_sourcing: EventSourcing(
     eventstore,
@@ -95,6 +170,9 @@ pub fn execute(
   Nil
 }
 
+/// An EventEnvelop is a wrapper around your domain events
+/// used by the Event Stores. You can use this type constructor
+/// if the event store provides a `load_events` function.
 pub type EventEnvelop(event) {
   MemoryStoreEventEnvelop(
     aggregate_id: AggregateId,

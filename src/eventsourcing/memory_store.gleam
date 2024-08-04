@@ -77,7 +77,7 @@ fn load_commited_events(
 pub fn load_events(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
-) {
+) -> List(eventsourcing.EventEnvelop(event)) {
   load_commited_events(memory_store, aggregate_id)
   |> fn(events) {
     io.println(
@@ -91,7 +91,14 @@ pub fn load_events(
   }
 }
 
-pub fn load_aggregate(
+pub fn load_aggregate_entity(
+  memory_store: MemoryStore(entity, command, event, error),
+  aggregate_id: eventsourcing.AggregateId,
+) -> entity {
+  load_aggregate(memory_store, aggregate_id).aggregate.entity
+}
+
+fn load_aggregate(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) -> eventsourcing.AggregateContext(entity, command, event, error) {
@@ -119,7 +126,7 @@ fn commit(
   memory_store: MemoryStore(entity, command, event, error),
   context: eventsourcing.AggregateContext(entity, command, event, error),
   events: List(event),
-) {
+) -> List(eventsourcing.EventEnvelop(event)) {
   let eventsourcing.AggregateContext(aggregate_id, _, sequence) = context
   let wrapped_events = wrap_events(aggregate_id, sequence, events)
   let past_events = load_commited_events(memory_store, aggregate_id)
