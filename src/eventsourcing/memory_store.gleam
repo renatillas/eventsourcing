@@ -8,9 +8,6 @@ import gleam/otp/actor
 import gleam/pair
 import gleam/result
 
-type State(event) =
-  Dict(eventsourcing.AggregateId, List(eventsourcing.EventEnvelop(event)))
-
 pub opaque type MemoryStore(entity, command, event, error) {
   MemoryStore(
     subject: process.Subject(Message(event)),
@@ -18,6 +15,20 @@ pub opaque type MemoryStore(entity, command, event, error) {
   )
 }
 
+type State(event) =
+  Dict(eventsourcing.AggregateId, List(eventsourcing.EventEnvelop(event)))
+
+type Message(event) {
+  Set(key: String, value: List(eventsourcing.EventEnvelop(event)))
+  Get(
+    key: String,
+    response: process.Subject(
+      Result(List(eventsourcing.EventEnvelop(event)), Nil),
+    ),
+  )
+}
+
+/// Create a new memory store record.
 pub fn new(
   emtpy_entity empty_entity: entity,
   handle_command_function handle: eventsourcing.Handle(
@@ -43,14 +54,32 @@ pub fn new(
   )
 }
 
-type Message(event) {
-  Set(key: String, value: List(eventsourcing.EventEnvelop(event)))
-  Get(
-    key: String,
-    response: process.Subject(
-      Result(List(eventsourcing.EventEnvelop(event)), Nil),
-    ),
-  )
+/// Load the currently commited events from the memory store.
+/// They are wrapped in a MemoryStoreEventEnvelop variant from the EventEnvelop type.
+pub fn load_events(
+  memory_store: MemoryStore(entity, command, event, error),
+  aggregate_id: eventsourcing.AggregateId,
+) -> List(eventsourcing.EventEnvelop(event)) {
+  load_commited_events(memory_store, aggregate_id)
+  |> fn(events) {
+    io.println(
+      "loading: "
+      <> events |> list.length |> int.to_string
+      <> " events for Aggregate ID '"
+      <> aggregate_id
+      <> "'",
+    )
+    events
+  }
+}
+
+/// Load a aggregate based on a aggregate_id.
+/// If the aggregate is not present, it returns an emtpy aggregate.
+pub fn load_aggregate_entity(
+  memory_store: MemoryStore(entity, command, event, error),
+  aggregate_id: eventsourcing.AggregateId,
+) -> entity {
+  load_aggregate(memory_store, aggregate_id).aggregate.entity
 }
 
 fn handle_message(message: Message(event), state: State(event)) {
@@ -72,30 +101,6 @@ fn load_commited_events(
 ) {
   actor.call(memory_store.subject, Get(aggregate_id, _), 10_000)
   |> result.unwrap([])
-}
-
-pub fn load_events(
-  memory_store: MemoryStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) -> List(eventsourcing.EventEnvelop(event)) {
-  load_commited_events(memory_store, aggregate_id)
-  |> fn(events) {
-    io.println(
-      "loading: "
-      <> events |> list.length |> int.to_string
-      <> " events for Aggregate ID '"
-      <> aggregate_id
-      <> "'",
-    )
-    events
-  }
-}
-
-pub fn load_aggregate_entity(
-  memory_store: MemoryStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) -> entity {
-  load_aggregate(memory_store, aggregate_id).aggregate.entity
 }
 
 fn load_aggregate(
