@@ -1,4 +1,4 @@
-# eventsourcing
+# Eventsourcing
 
 [![Package Version](https://img.shields.io/hexpm/v/eventsourcing)](https://hex.pm/packages/eventsourcing)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/eventsourcing/)
@@ -24,22 +24,6 @@ pub type BankAccountEvent {
   AccountOpened(account_id: String)
   CustomerDepositedCash(amount: Float, balance: Float)
   CustomerWithdrewCash(amount: Float, balance: Float)
-}
-
-pub fn event_type() {
-  "BankAccountEvent"
-}
-
-pub fn encode_event(event: BankAccountEvent) -> String {
-  // ...
-  todo
-}
-
-pub fn decode_event(
-  string: String,
-) -> Result(BankAccountEvent, List(dynamic.DecodeError)) {
-  // ...
-  todo
 }
 
 pub fn handle(
@@ -73,35 +57,26 @@ pub fn apply(bank_account: BankAccount, event: BankAccountEvent) {
   }
 }
 
-pub fn aggregate_type() -> String {
-  "BankAccount"
-}
-
-
 pub fn main() {
-  let postgres_store =
-    postgres_store.new(
-      pgo_config: pgo.Config(
-        ..pgo.default_config(),
-        host: "localhost",
-        database: "postgres",
-        pool_size: 15,
-        password: option.Some("password"),
-      ),
-      emtpy_entity: BankAccount(opened: False, balance: 0.0),
-      handle_command_function: handle,
-      apply_function: apply,
-      event_encoder: encode_event,
-      event_decoder: decode_event,
-      event_type: event_type(),
-      event_version: "1",
-      aggregate_type: aggregate_type(),
+  let mem_store =
+    memory_store.new(BankAccount(opened: False, balance: 0.0), handle, apply)
+  let query = fn(
+    aggregate_id: String,
+    events: List(eventsourcing.EventEnvelop(BankAccountEvent)),
+  ) {
+    io.println_error(
+      "Aggregate Bank Account with ID: "
+      <> aggregate_id
+      <> " commited "
+      <> events |> list.length |> int.to_string
+      <> " events.",
     )
-  let event_sourcing = eventsourcing.new(postgres_store, [])
+  }
+  let event_sourcing = eventsourcing.new(mem_store, [query])
   eventsourcing.execute(
     event_sourcing,
     "92085b42-032c-4d7a-84de-a86d67123858",
-    DepositMoney(10.0),
+    OpenAccount("92085b42-032c-4d7a-84de-a86d67123858"),
   )
 }
 ```
