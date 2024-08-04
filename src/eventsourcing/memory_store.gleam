@@ -111,7 +111,7 @@ fn load_aggregate(
 
   let #(aggregate, sequence) =
     list.fold(
-      over: commited_events |> list.reverse,
+      over: commited_events,
       from: #(memory_store.empty_aggregate, 0),
       with: fn(aggregate_and_sequence, event_envelop) {
         let #(aggregate, _) = aggregate_and_sequence
@@ -135,7 +135,7 @@ fn commit(
   let eventsourcing.AggregateContext(aggregate_id, _, sequence) = context
   let wrapped_events = wrap_events(aggregate_id, sequence, events)
   let past_events = load_commited_events(memory_store, aggregate_id)
-  let events = list.append(wrapped_events, past_events)
+  let events = list.append(past_events, wrapped_events)
   io.println(
     "storing: "
     <> wrapped_events |> list.length |> int.to_string

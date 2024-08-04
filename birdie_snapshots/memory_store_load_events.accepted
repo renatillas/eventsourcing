@@ -1,0 +1,23 @@
+---
+version: 1.1.8
+title: memory store load events
+file: ./test/eventsourcing_test.gleam
+test_name: memory_store_load_events_test
+---
+[
+  MemoryStoreEventEnvelop(
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    1,
+    AccountOpened("92085b42-032c-4d7a-84de-a86d67123858"),
+  ),
+  MemoryStoreEventEnvelop(
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    2,
+    CustomerDepositedCash(10.0, 10.0),
+  ),
+  MemoryStoreEventEnvelop(
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    3,
+    CustomerWithdrewCash(5.99, 4.01),
+  ),
+]
