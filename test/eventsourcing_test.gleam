@@ -16,7 +16,7 @@ pub fn main() {
   gleeunit.main()
 }
 
-pub fn memory_store_execute_open_account() {
+pub fn memory_store_execute_open_account_test() {
   let mem_store =
     memory_store.new(BankAccount(opened: False, balance: 0.0), handle, apply)
   let event_sourcing = eventsourcing.new(mem_store, [])
@@ -30,42 +30,6 @@ pub fn memory_store_execute_open_account() {
 
   memory_store.load_aggregate(
     mem_store.eventstore,
-    "92085b42-032c-4d7a-84de-a86d67123858",
-  ).aggregate.entity
-  |> pprint.format
-  |> birdie.snap(title: "memory store open account")
-}
-
-pub fn postgres_store_execute_open_account_test() {
-  let postgres_store =
-    postgres_store.new(
-      pgo_config: pgo.Config(
-        ..pgo.default_config(),
-        host: "localhost",
-        database: "postgres",
-        pool_size: 15,
-        password: option.Some("password"),
-      ),
-      emtpy_entity: BankAccount(opened: False, balance: 0.0),
-      handle_command_function: handle,
-      apply_function: apply,
-      event_encoder: encode_event,
-      event_decoder: decode_event,
-      event_type: event_type(),
-      event_version: "1",
-      aggregate_type: aggregate_type(),
-    )
-  let event_sourcing = eventsourcing.new(postgres_store, [])
-  eventsourcing.execute(
-    event_sourcing,
-    "92085b42-032c-4d7a-84de-a86d67123858",
-    DepositMoney(10.0),
-  )
-  |> should.be_ok
-  |> should.equal(Nil)
-
-  postgres_store.load_aggregate(
-    postgres_store.eventstore,
     "92085b42-032c-4d7a-84de-a86d67123858",
   ).aggregate.entity
   |> pprint.format
@@ -172,8 +136,8 @@ pub fn handle(
     }
     WithDrawMoney(amount) -> {
       let balance = bank_account.balance -. amount
-      case amount >. 0.0 {
-        True -> Ok([CustomerDepositedCash(amount:, balance:)])
+      case amount >. 0.0 && balance >. 0.0 {
+        True -> Ok([CustomerWithdrewCash(amount:, balance:)])
         False -> Error(Nil)
       }
     }

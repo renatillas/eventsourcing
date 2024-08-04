@@ -56,7 +56,7 @@ pub fn new(
   )
 }
 
-fn load_aggregate(
+pub fn load_aggregate(
   postgres_store: PostgresStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) {
@@ -80,7 +80,7 @@ fn load_aggregate(
   eventsourcing.AggregateContext(aggregate_id:, aggregate:, sequence:)
 }
 
-fn load_events(
+pub fn load_events(
   postgres_store: PostgresStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) {
