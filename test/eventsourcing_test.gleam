@@ -2,11 +2,8 @@ import birdie
 import decode
 import eventsourcing
 import eventsourcing/memory_store
-import eventsourcing/postgres_store
 import gleam/dynamic
 import gleam/json
-import gleam/option
-import gleam/pgo
 import gleam/result
 import gleeunit
 import gleeunit/should
