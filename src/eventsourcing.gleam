@@ -1,4 +1,3 @@
-import gleam/dict.{type Dict}
 import gleam/list
 import gleam/result
 
@@ -32,14 +31,13 @@ pub type EventStore(eventstore, entity, command, event, error) {
       eventstore,
       AggregateContext(entity, command, event, error),
       List(event),
-      Dict(String, String),
     ) ->
       List(EventEnvelop(event)),
   )
 }
 
 pub type AggregateContext(entity, command, event, error) {
-  MemoryStoreAggregateContext(
+  AggregateContext(
     aggregate_id: AggregateId,
     aggregate: Aggregate(entity, command, event, error),
     sequence: Int,
@@ -91,7 +89,6 @@ pub fn execute(
       event_sourcing.event_store.eventstore,
       aggregate_context,
       events,
-      dict.new(),
     )
   event_sourcing.queries
   |> list.map(fn(query) { query(aggregate_id, commited_events) })
@@ -99,10 +96,17 @@ pub fn execute(
 }
 
 pub type EventEnvelop(event) {
-  EventEnvelop(
+  MemoryStoreEventEnvelop(
     aggregate_id: AggregateId,
     sequence: Int,
     payload: event,
-    metadata: Dict(String, String),
+  )
+  SerializedEventEnvelop(
+    aggregate_id: AggregateId,
+    sequence: Int,
+    payload: event,
+    event_type: String,
+    event_version: String,
+    aggregate_type: String,
   )
 }
