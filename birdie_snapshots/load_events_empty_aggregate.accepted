@@ -1,0 +1,7 @@
+---
+version: 1.1.8
+title: load events empty aggregate
+file: ./test/eventsourcing_test.gleam
+test_name: load_events_emtpy_aggregate_test
+---
+[]
