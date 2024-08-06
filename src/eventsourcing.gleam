@@ -29,11 +29,13 @@ pub type EventEnvelop(event) {
     aggregate_id: AggregateId,
     sequence: Int,
     payload: event,
+    metadata: List(#(String, String)),
   )
   SerializedEventEnvelop(
     aggregate_id: AggregateId,
     sequence: Int,
     payload: event,
+    metadata: List(#(String, String)),
     event_type: String,
     event_version: String,
     aggregate_type: String,
@@ -79,6 +81,7 @@ pub type EventStore(eventstore, entity, command, event, error) {
       eventstore,
       AggregateContext(entity, command, event, error),
       List(event),
+      List(#(String, String)),
     ) ->
       List(EventEnvelop(event)),
   )
@@ -177,6 +180,22 @@ pub fn execute(
   aggregate_id aggregate_id: AggregateId,
   command command: command,
 ) -> Result(Nil, error) {
+  execute_with_metadata(event_sourcing:, aggregate_id:, command:, metadata: [])
+}
+
+pub fn execute_with_metadata(
+  event_sourcing event_sourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    aggregatecontext,
+  ),
+  aggregate_id aggregate_id: AggregateId,
+  command command: command,
+  metadata metadata: List(#(String, String)),
+) -> Result(Nil, error) {
   let aggregate_context =
     event_sourcing.event_store.load_aggregate(
       event_sourcing.event_store.eventstore,
@@ -191,6 +210,7 @@ pub fn execute(
       event_sourcing.event_store.eventstore,
       aggregate_context,
       events,
+      metadata,
     )
   event_sourcing.queries
   |> list.map(fn(query) { query(aggregate_id, commited_events) })
