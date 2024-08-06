@@ -1,4 +1,5 @@
 import eventsourcing
+import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/int
@@ -78,8 +79,28 @@ pub fn load_events(
 pub fn load_aggregate_entity(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
-) -> entity {
-  load_aggregate(memory_store, aggregate_id).aggregate.entity
+) -> Result(entity, Nil) {
+  let commited_events = load_events(memory_store, aggregate_id)
+
+  use <- bool.guard(commited_events |> list.length == 0, Error(Nil))
+  let #(aggregate, sequence) =
+    list.fold(
+      over: commited_events,
+      from: #(memory_store.empty_aggregate, 0),
+      with: fn(aggregate_and_sequence, event_envelop) {
+        let #(aggregate, _) = aggregate_and_sequence
+        #(
+          eventsourcing.Aggregate(
+            ..aggregate,
+            entity: aggregate.apply(aggregate.entity, event_envelop.payload),
+          ),
+          event_envelop.sequence,
+        )
+      },
+    )
+  Ok(
+    eventsourcing.AggregateContext(aggregate_id:, aggregate:, sequence:).aggregate.entity,
+  )
 }
 
 fn handle_message(message: Message(event), state: State(event)) {
