@@ -8,7 +8,7 @@ gleam add eventsourcing
 ```
 ```gleam
 import eventsourcing
-import eventsourcing/postgres_store
+import eventsourcing/memory_store
 
 pub type BankAccount {
   BankAccount(opened: Bool, balance: Float)
@@ -41,8 +41,8 @@ pub fn handle(
     }
     WithDrawMoney(amount) -> {
       let balance = bank_account.balance -. amount
-      case amount >. 0.0 {
-        True -> Ok([CustomerDepositedCash(amount:, balance:)])
+      case amount >. 0.0 && balance >. 0.0 {
+        True -> Ok([CustomerWithdrewCash(amount:, balance:)])
         False -> Error(Nil)
       }
     }
