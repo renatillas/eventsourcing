@@ -4,7 +4,8 @@ import gleam/json
 import gleam/result
 
 pub type BankAccount {
-  BankAccount(opened: Bool, balance: Float)
+  BankAccount(balance: Float)
+  UnopenedBankAccount
 }
 
 pub const bank_account_type = "BankAccount"
@@ -23,34 +24,43 @@ pub type BankAccountEvent {
 
 pub const bank_account_event_type = "BankAccountEvent"
 
+pub type BankAccountError {
+  CantDepositNegativeAmount
+  CantOperateOnUnopenedAccount
+  CantWithdrawMoreThanCurrentBalance
+}
+
 pub fn handle(
   bank_account: BankAccount,
   command: BankAccountCommand,
-) -> Result(List(BankAccountEvent), Nil) {
-  case command {
-    OpenAccount(account_id) -> Ok([AccountOpened(account_id)])
-    DepositMoney(amount) -> {
-      let balance = bank_account.balance +. amount
+) -> Result(List(BankAccountEvent), BankAccountError) {
+  case bank_account, command {
+    UnopenedBankAccount, OpenAccount(account_id) ->
+      Ok([AccountOpened(account_id)])
+    BankAccount(balance), DepositMoney(amount) -> {
+      let balance = balance +. amount
       case amount >. 0.0 {
         True -> Ok([CustomerDepositedCash(amount:, balance:)])
-        False -> Error(Nil)
+        False -> Error(CantDepositNegativeAmount)
       }
     }
-    WithDrawMoney(amount) -> {
-      let balance = bank_account.balance -. amount
+    BankAccount(balance), WithDrawMoney(amount) -> {
+      let balance = balance -. amount
       case amount >. 0.0 && balance >. 0.0 {
         True -> Ok([CustomerWithdrewCash(amount:, balance:)])
-        False -> Error(Nil)
+        False -> Error(CantWithdrawMoreThanCurrentBalance)
       }
     }
+    _, _ -> Error(CantOperateOnUnopenedAccount)
   }
 }
 
 pub fn apply(bank_account: BankAccount, event: BankAccountEvent) {
-  case event {
-    AccountOpened(_) -> BankAccount(..bank_account, opened: True)
-    CustomerDepositedCash(_, balance) -> BankAccount(..bank_account, balance:)
-    CustomerWithdrewCash(_, balance) -> BankAccount(..bank_account, balance:)
+  case bank_account, event {
+    UnopenedBankAccount, AccountOpened(_) -> BankAccount(0.0)
+    BankAccount(_), CustomerDepositedCash(_, balance) -> BankAccount(balance:)
+    BankAccount(_), CustomerWithdrewCash(_, balance) -> BankAccount(balance:)
+    _, _ -> panic
   }
 }
 
