@@ -4,4 +4,4 @@ title: load aggregate entity
 file: ./test/eventsourcing_test.gleam
 test_name: load_aggregate_entity_test
 ---
-Ok(BankAccount(True, 4.01))
+Ok(BankAccount(4.01))

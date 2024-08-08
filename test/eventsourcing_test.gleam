@@ -13,7 +13,7 @@ pub fn main() {
 pub fn execute_test() {
   let mem_store =
     memory_store.new(
-      example_bank_account.BankAccount(opened: False, balance: 0.0),
+      example_bank_account.UnopenedBankAccount,
       example_bank_account.handle,
       example_bank_account.apply,
     )
@@ -30,7 +30,7 @@ pub fn execute_test() {
 pub fn query_test() {
   let mem_store =
     memory_store.new(
-      example_bank_account.BankAccount(opened: False, balance: 0.0),
+      example_bank_account.UnopenedBankAccount,
       example_bank_account.handle,
       example_bank_account.apply,
     )
@@ -57,7 +57,7 @@ pub fn query_test() {
 pub fn load_events_test() {
   let mem_store =
     memory_store.new(
-      example_bank_account.BankAccount(opened: False, balance: 0.0),
+      example_bank_account.UnopenedBankAccount,
       example_bank_account.handle,
       example_bank_account.apply,
     )
@@ -97,7 +97,7 @@ pub fn load_events_test() {
 pub fn load_events_with_metadata_test() {
   let mem_store =
     memory_store.new(
-      example_bank_account.BankAccount(opened: False, balance: 0.0),
+      example_bank_account.UnopenedBankAccount,
       example_bank_account.handle,
       example_bank_account.apply,
     )
@@ -122,7 +122,7 @@ pub fn load_events_with_metadata_test() {
 pub fn load_events_emtpy_aggregate_test() {
   let mem_store =
     memory_store.new(
-      example_bank_account.BankAccount(opened: False, balance: 0.0),
+      example_bank_account.UnopenedBankAccount,
       example_bank_account.handle,
       example_bank_account.apply,
     )
@@ -137,7 +137,7 @@ pub fn load_events_emtpy_aggregate_test() {
 pub fn load_aggregate_entity_test() {
   let mem_store =
     memory_store.new(
-      example_bank_account.BankAccount(opened: False, balance: 0.0),
+      example_bank_account.UnopenedBankAccount,
       example_bank_account.handle,
       example_bank_account.apply,
     )
@@ -177,7 +177,7 @@ pub fn load_aggregate_entity_test() {
 pub fn load_emtpy_aggregate_entity_test() {
   let mem_store =
     memory_store.new(
-      example_bank_account.BankAccount(opened: False, balance: 0.0),
+      example_bank_account.UnopenedBankAccount,
       example_bank_account.handle,
       example_bank_account.apply,
     )
