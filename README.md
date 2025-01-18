@@ -33,13 +33,6 @@
   - [Running the Example](#running-the-example)
 - [Philosophy](#philosophy)
 - [Installation](#installation)
-- [Usage](#usage)
-  - [Setup](#setup)
-  - [Defining Aggregates](#defining-aggregates)
-  - [Defining Commands and Events](#defining-commands-and-events)
-  - [Handling Commands](#handling-commands)
-  - [Applying Events](#applying-events)
-- [Where next](#where-next)
 - [Support](#support)
 - [Contributing](#contributing)
 - [License](#license)
@@ -169,97 +162,6 @@ Eventsourcing is published on [Hex](https://hex.pm/packages/eventsourcing)! You 
 gleam add eventsourcing
 ```
 
-## Usage
-
-### Setup
-
-First, add `eventsourcing` to your Gleam project:
-
-```sh
-gleam add eventsourcing
-```
-
-### Defining Aggregates
-
-An aggregate is a cluster of domain objects that can be treated as a single unit. In our example, `BankAccount` is an aggregate:
-
-```gleam
-pub type BankAccount {
-  BankAccount(balance: Float)
-  UnopenedBankAccount
-}
-```
-
-### Defining Commands and Events
-
-Commands represent the intent to change the state, while events represent the actual change that occurred:
-
-```gleam
-pub type BankAccountCommand {
-  OpenAccount(account_id: String)
-  DepositMoney(amount: Float)
-  WithDrawMoney(amount: Float)
-}
-
-pub type BankAccountEvent {
-  AccountOpened(account_id: String)
-  CustomerDepositedCash(amount: Float, balance: Float)
-  CustomerWithdrewCash(amount: Float, balance: Float)
-}
-```
-
-### Handling Commands
-
-Commands are handled by the `handle` function, which produces events based on the current state and the received command:
-
-```gleam
-pub fn handle(
-  bank_account: BankAccount,
-  command: BankAccountCommand,
-) -> Result(List(BankAccountEvent), BankAccountError) {
-  case bank_account, command {
-    UnopenedBankAccount, OpenAccount(account_id) ->
-      Ok([AccountOpened(account_id)])
-    BankAccount(balance), DepositMoney(amount) -> {
-      let balance = balance +. amount
-      case amount >. 0.0 {
-        True -> Ok([CustomerDepositedCash(amount:, balance:)])
-        False -> Error(CantDepositNegativeAmount)
-      }
-    }
-    BankAccount(balance), WithDrawMoney(amount) -> {
-      let balance = balance -. amount
-      case amount >. 0.0 && balance >. 0.0 {
-        True -> Ok([CustomerWithdrewCash(amount:, balance:)])
-        False -> Error(CantWithdrawMoreThanCurrentBalance)
-      }
-    }
-    _, _ -> Error(CantOperateOnUnopenedAccount)
-  }
-}
-```
-
-### Applying Events
-
-Events are applied to update the state in the `apply` function:
-
-```gleam
-pub fn apply(bank_account: BankAccount, event: BankAccountEvent) {
-  case bank_account, event {
-    UnopenedBankAccount, AccountOpened(_) -> BankAccount(0.0)
-    BankAccount(_), CustomerDepositedCash(_, balance) -> BankAccount(balance:)
-    BankAccount(_), CustomerWithdrewCash(_, balance) -> BankAccount(balance:)
-    _, _ -> panic
-  }
-}
-```
-
-## Where next
-
-To get up to speed with Eventsourcing, check out the [quickstart guide](https://hexdocs.pm/eventsourcing/guide/01-quickstart.html). If you prefer to see some code, the [examples](https://github.com/renatillas/eventsourcing/tree/main/examples) directory contains a handful of small applications that demonstrate different aspects of the library.
-
-You can also read through the documentation and API reference on [HexDocs](https://hexdocs.pm/eventsourcing).
-
 ## Support
 
 Eventsourcing is built by [Renatillas](https://github.com/renatillas). Contributions are very welcome! If you've spotted a bug, or would like to suggest a feature, please open an issue or a pull request.
@@ -279,7 +181,3 @@ Please ensure your code adheres to the project's coding standards and includes a
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
----
-
-This expanded README provides a comprehensive overview of the `eventsourcing` library, including detailed usage instructions and a clear structure to help users get started quickly.
