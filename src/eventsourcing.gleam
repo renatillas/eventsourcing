@@ -44,12 +44,15 @@ pub type EventEnvelop(event) {
   )
 }
 
+@internal
 pub type Handle(entity, command, event, error) =
   fn(entity, command) -> Result(List(event), error)
 
+@internal
 pub type Apply(entity, event) =
   fn(entity, event) -> entity
 
+@internal
 pub type Query(event) =
   fn(AggregateId, List(EventEnvelop(event))) -> Nil
 
@@ -93,72 +96,6 @@ pub type EventStore(eventstore, entity, command, event, error) {
 /// an Event Store and a list of queries you want
 /// run whenever events are commited.
 ///
-/// # Examples
-/// ```gleam
-/// pub type BankAccount {
-///   BankAccount(opened: Bool, balance: Float)
-/// }
-///
-/// pub type BankAccountCommand {
-///   OpenAccount(account_id: String)
-///   DepositMoney(amount: Float)
-///   WithDrawMoney(amount: Float)
-/// }
-///
-/// pub type BankAccountEvent {
-///   AccountOpened(account_id: String)
-///   CustomerDepositedCash(amount: Float, balance: Float)
-///   CustomerWithdrewCash(amount: Float, balance: Float)
-/// }
-///
-/// pub fn handle(
-///   bank_account: BankAccount,
-///   command: BankAccountCommand,
-/// ) -> Result(List(BankAccountEvent), Nil) {
-///   case command {
-///     OpenAccount(account_id) -> Ok([AccountOpened(account_id)])
-///     DepositMoney(amount) -> {
-///       let balance = bank_account.balance +. amount
-///       case amount >. 0.0 {
-///         True -> Ok([CustomerDepositedCash(amount:, balance:)])
-///         False -> Error(Nil)
-///       }
-///     }
-///     WithDrawMoney(amount) -> {
-///       let balance = bank_account.balance -. amount
-///       case amount >. 0.0 && balance >. 0.0 {
-///         True -> Ok([CustomerWithdrewCash(amount:, balance:)])
-///         False -> Error(Nil)
-///       }
-///     }
-///   }
-/// }
-/// 
-/// pub fn apply(bank_account: BankAccount, event: BankAccountEvent) {
-///   case event {
-///     AccountOpened(_) -> BankAccount(..bank_account, opened: True)
-///     CustomerDepositedCash(_, balance) -> BankAccount(..bank_account, balance:)
-///     CustomerWithdrewCash(_, balance) -> BankAccount(..bank_account, balance:)
-///   }
-/// }
-/// fn main() {
-///   let mem_store =
-///     memory_store.new(BankAccount(opened: False, balance: 0.0), handle, apply)
-///   let query = fn(
-///     aggregate_id: String,
-///     events: List(eventsourcing.EventEnvelop(BankAccountEvent)),
-///   ) {
-///     io.println(
-///       "Aggregate Bank Account with ID: "
-///       <> aggregate_id
-///       <> " commited "
-///       <> events |> list.length |> int.to_string
-///       <> " events.",
-///     )
-///   }
-///   let event_sourcing = eventsourcing.new(mem_store, [query])
-/// }
-/// ```
 pub fn new(event_store, queries) {
   EventSourcing(event_store:, queries:)
 }
@@ -170,7 +107,7 @@ pub fn new(event_store, queries) {
 /// Run execute with your event_sourcing instance and the command you want to apply.
 /// It will return a Result with Ok(Nil) or Error(your domain error) if the command failed.
 pub fn execute(
-  event_sourcing: EventSourcing(
+  event_sourcing event_sourcing: EventSourcing(
     eventstore,
     entity,
     command,
@@ -219,7 +156,7 @@ pub fn execute_with_metadata(
 }
 
 pub fn add_query(
-  eventsourcing: EventSourcing(
+  eventsouring eventsourcing: EventSourcing(
     eventstore,
     entity,
     command,
@@ -227,13 +164,13 @@ pub fn add_query(
     error,
     aggregatecontext,
   ),
-  query,
+  query query,
 ) {
   EventSourcing(..eventsourcing, queries: [query, ..eventsourcing.queries])
 }
 
 pub fn load_events(
-  eventsourcing: EventSourcing(
+  eventsourcing eventsourcing: EventSourcing(
     eventstore,
     entity,
     command,
@@ -241,7 +178,7 @@ pub fn load_events(
     error,
     aggregatecontext,
   ),
-  aggregate_id: AggregateId,
+  aggregate_id aggregate_id: AggregateId,
 ) -> List(EventEnvelop(event)) {
   eventsourcing.event_store.load_events(
     eventsourcing.event_store.eventstore,
