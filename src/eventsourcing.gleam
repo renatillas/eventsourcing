@@ -73,7 +73,7 @@ pub opaque type EventSourcing(
   )
 }
 
-/// Wrapper around the event store implementations
+@internal
 pub type EventStore(eventstore, entity, command, event, error) {
   EventStore(
     eventstore: eventstore,
