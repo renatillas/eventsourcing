@@ -24,8 +24,7 @@ pub type AggregateContext(entity, command, event, error) {
 }
 
 /// An EventEnvelop is a wrapper around your domain events
-/// used by the Event Stores. You can use this type constructor
-/// if the event store provides a `load_events` function.
+/// used by the Event Stores.
 pub type EventEnvelop(event) {
   MemoryStoreEventEnvelop(
     aggregate_id: AggregateId,
@@ -96,7 +95,10 @@ pub type EventStore(eventstore, entity, command, event, error) {
 /// an Event Store and a list of queries you want
 /// run whenever events are commited.
 ///
-pub fn new(event_store, queries) {
+pub fn new(
+  event_store: EventStore(eventstore, entity, command, event, error),
+  queries: List(fn(AggregateId, List(EventEnvelop(event))) -> Nil),
+) {
   EventSourcing(event_store:, queries:)
 }
 
