@@ -1,5 +1,4 @@
 import eventsourcing
-import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/list
@@ -54,56 +53,6 @@ pub fn new(
   )
 }
 
-/// Load a aggregate based on a aggregate_id.
-/// If the aggregate is not present, it returns an emtpy aggregate.
-pub fn load_aggregate_entity(
-  memory_store: MemoryStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) -> Result(entity, Nil) {
-  let commited_events = load_commited_events(memory_store, aggregate_id)
-
-  use <- bool.guard(commited_events |> list.length == 0, Error(Nil))
-  let #(aggregate, sequence) =
-    list.fold(
-      over: commited_events,
-      from: #(memory_store.empty_aggregate, 0),
-      with: fn(aggregate_and_sequence, event_envelop) {
-        let #(aggregate, _) = aggregate_and_sequence
-        #(
-          eventsourcing.Aggregate(
-            ..aggregate,
-            entity: aggregate.apply(aggregate.entity, event_envelop.payload),
-          ),
-          event_envelop.sequence,
-        )
-      },
-    )
-  Ok(
-    eventsourcing.AggregateContext(aggregate_id:, aggregate:, sequence:).aggregate.entity,
-  )
-}
-
-fn handle_message(message: Message(event), state: State(event)) {
-  case message {
-    Set(key, value) -> {
-      state |> dict.insert(key, value) |> actor.continue
-    }
-    Get(key, response) -> {
-      let value = state |> dict.get(key)
-      actor.send(response, value)
-      actor.continue(state)
-    }
-  }
-}
-
-fn load_commited_events(
-  memory_store: MemoryStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) {
-  actor.call(memory_store.subject, Get(aggregate_id, _), 10_000)
-  |> result.unwrap([])
-}
-
 fn load_aggregate(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
@@ -126,6 +75,27 @@ fn load_aggregate(
       },
     )
   eventsourcing.AggregateContext(aggregate_id:, aggregate:, sequence:)
+}
+
+fn handle_message(message: Message(event), state: State(event)) {
+  case message {
+    Set(key, value) -> {
+      state |> dict.insert(key, value) |> actor.continue
+    }
+    Get(key, response) -> {
+      let value = state |> dict.get(key)
+      actor.send(response, value)
+      actor.continue(state)
+    }
+  }
+}
+
+fn load_commited_events(
+  memory_store: MemoryStore(entity, command, event, error),
+  aggregate_id: eventsourcing.AggregateId,
+) {
+  actor.call(memory_store.subject, Get(aggregate_id, _), 10_000)
+  |> result.unwrap([])
 }
 
 fn commit(

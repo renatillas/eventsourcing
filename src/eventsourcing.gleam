@@ -24,7 +24,8 @@ pub type AggregateContext(entity, command, event, error) {
 }
 
 /// An EventEnvelop is a wrapper around your domain events
-/// used by the Event Stores.
+/// used by the Event Stores. You can use this type constructor
+/// if the event store provides a `load_events` function.
 pub type EventEnvelop(event) {
   MemoryStoreEventEnvelop(
     aggregate_id: AggregateId,
@@ -43,13 +44,19 @@ pub type EventEnvelop(event) {
   )
 }
 
-@internal
-pub type Handle(entity, command, event, error) =
-  fn(entity, command) -> Result(List(event), error)
+pub type EventSourcingError(domainerror) {
+  DomainError(domainerror)
+  ImplementationError
+  EntityNotFound
+}
 
 @internal
 pub type Apply(entity, event) =
   fn(entity, event) -> entity
+
+@internal
+pub type Handle(entity, command, event, error) =
+  fn(entity, command) -> Result(List(event), error)
 
 @internal
 pub type Query(event) =
@@ -72,7 +79,7 @@ pub opaque type EventSourcing(
   )
 }
 
-@internal
+/// Wrapper around the event store implementations
 pub type EventStore(eventstore, entity, command, event, error) {
   EventStore(
     eventstore: eventstore,
@@ -95,10 +102,7 @@ pub type EventStore(eventstore, entity, command, event, error) {
 /// an Event Store and a list of queries you want
 /// run whenever events are commited.
 ///
-pub fn new(
-  event_store: EventStore(eventstore, entity, command, event, error),
-  queries: List(fn(AggregateId, List(EventEnvelop(event))) -> Nil),
-) {
+pub fn new(event_store, queries) {
   EventSourcing(event_store:, queries:)
 }
 
@@ -119,7 +123,7 @@ pub fn execute(
   ),
   aggregate_id aggregate_id: AggregateId,
   command command: command,
-) -> Result(Nil, error) {
+) -> Result(Nil, EventSourcingError(error)) {
   execute_with_metadata(event_sourcing:, aggregate_id:, command:, metadata: [])
 }
 
@@ -135,7 +139,7 @@ pub fn execute_with_metadata(
   aggregate_id aggregate_id: AggregateId,
   command command: command,
   metadata metadata: List(#(String, String)),
-) -> Result(Nil, error) {
+) -> Result(Nil, EventSourcingError(error)) {
   let aggregate_context =
     event_sourcing.event_store.load_aggregate(
       event_sourcing.event_store.eventstore,
@@ -143,7 +147,10 @@ pub fn execute_with_metadata(
     )
   let aggregate = aggregate_context.aggregate
   let entity = aggregate.entity
-  use events <- result.map(aggregate.handle(entity, command))
+  use events <- result.try(
+    aggregate.handle(entity, command)
+    |> result.map_error(fn(error) { DomainError(error) }),
+  )
   events |> list.map(aggregate.apply(entity, _))
   let commited_events =
     event_sourcing.event_store.commit(
@@ -154,7 +161,7 @@ pub fn execute_with_metadata(
     )
   event_sourcing.queries
   |> list.map(fn(query) { query(aggregate_id, commited_events) })
-  Nil
+  Ok(Nil)
 }
 
 pub fn add_query(
@@ -197,12 +204,12 @@ pub fn load_aggregate(
     error,
     aggregatecontext,
   ),
-  aggregate_id aggregate_id: String,
-) -> Result(entity, Nil) {
-  Ok(
+  aggregate_id aggregate_id: AggregateId,
+) -> entity {
+  {
     eventsourcing.event_store.load_aggregate(
       eventsourcing.event_store.eventstore,
       aggregate_id,
-    ).aggregate.entity,
-  )
+    ).aggregate.entity
+  }
 }
