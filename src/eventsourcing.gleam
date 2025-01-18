@@ -2,8 +2,10 @@ import gleam/list
 import gleam/result
 
 // TYPES ----
+pub type AggregateId =
+  String
 
-/// Used by the EventStore implementations
+@internal
 pub type Aggregate(entity, command, event, error) {
   Aggregate(
     entity: entity,
@@ -12,7 +14,7 @@ pub type Aggregate(entity, command, event, error) {
   )
 }
 
-/// Used by the EventStore implementations
+@internal
 pub type AggregateContext(entity, command, event, error) {
   AggregateContext(
     aggregate_id: AggregateId,
@@ -42,16 +44,13 @@ pub type EventEnvelop(event) {
   )
 }
 
-type AggregateId =
-  String
-
-type Handle(entity, command, event, error) =
+pub type Handle(entity, command, event, error) =
   fn(entity, command) -> Result(List(event), error)
 
-type Apply(entity, event) =
+pub type Apply(entity, event) =
   fn(entity, event) -> entity
 
-type Query(event) =
+pub type Query(event) =
   fn(AggregateId, List(EventEnvelop(event))) -> Nil
 
 /// The main record of the library. 
@@ -77,6 +76,7 @@ pub type EventStore(eventstore, entity, command, event, error) {
     eventstore: eventstore,
     load_aggregate: fn(eventstore, AggregateId) ->
       AggregateContext(entity, command, event, error),
+    load_events: fn(eventstore, AggregateId) -> List(EventEnvelop(event)),
     commit: fn(
       eventstore,
       AggregateContext(entity, command, event, error),
@@ -165,6 +165,7 @@ pub fn new(event_store, queries) {
 
 // PUBLIC FUNCTIONS ----
 
+/// **Execute**
 /// The main function of the package. 
 /// Run execute with your event_sourcing instance and the command you want to apply.
 /// It will return a Result with Ok(Nil) or Error(your domain error) if the command failed.
@@ -215,4 +216,35 @@ pub fn execute_with_metadata(
   event_sourcing.queries
   |> list.map(fn(query) { query(aggregate_id, commited_events) })
   Nil
+}
+
+pub fn add_query(
+  eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    aggregatecontext,
+  ),
+  query,
+) {
+  EventSourcing(..eventsourcing, queries: [query, ..eventsourcing.queries])
+}
+
+pub fn load_events(
+  eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    aggregatecontext,
+  ),
+  aggregate_id: AggregateId,
+) -> List(EventEnvelop(event)) {
+  eventsourcing.event_store.load_events(
+    eventsourcing.event_store.eventstore,
+    aggregate_id,
+  )
 }
