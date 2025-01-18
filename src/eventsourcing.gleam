@@ -206,10 +206,8 @@ pub fn load_aggregate(
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> entity {
-  {
-    eventsourcing.event_store.load_aggregate(
-      eventsourcing.event_store.eventstore,
-      aggregate_id,
-    ).aggregate.entity
-  }
+  eventsourcing.event_store.load_aggregate(
+    eventsourcing.event_store.eventstore,
+    aggregate_id,
+  ).aggregate.entity
 }
