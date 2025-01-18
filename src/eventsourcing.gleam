@@ -187,3 +187,22 @@ pub fn load_events(
     aggregate_id,
   )
 }
+
+pub fn load_aggregate(
+  eventsourcing eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    aggregatecontext,
+  ),
+  aggregate_id aggregate_id: String,
+) -> Result(entity, Nil) {
+  Ok(
+    eventsourcing.event_store.load_aggregate(
+      eventsourcing.event_store.eventstore,
+      aggregate_id,
+    ).aggregate.entity,
+  )
+}
