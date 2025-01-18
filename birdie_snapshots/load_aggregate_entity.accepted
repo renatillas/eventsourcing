@@ -1,7 +1,7 @@
 ---
-version: 1.1.8
+version: 1.2.5
 title: load aggregate entity
 file: ./test/eventsourcing_test.gleam
-test_name: load_aggregate_entity_test
+test_name: load_aggregate_test
 ---
-Ok(BankAccount(4.01))
+BankAccount(4.01)
