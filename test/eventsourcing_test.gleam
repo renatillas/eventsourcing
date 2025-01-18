@@ -86,8 +86,8 @@ pub fn load_events_test() {
   |> should.be_ok
   |> should.equal(Nil)
 
-  memory_store.load_events(
-    mem_store.eventstore,
+  eventsourcing.load_events(
+    event_sourcing,
     "92085b42-032c-4d7a-84de-a86d67123858",
   )
   |> pprint.format
@@ -111,8 +111,8 @@ pub fn load_events_with_metadata_test() {
   |> should.be_ok
   |> should.equal(Nil)
 
-  memory_store.load_events(
-    mem_store.eventstore,
+  eventsourcing.load_events(
+    event_sourcing,
     "92085b42-032c-4d7a-84de-a86d67123858",
   )
   |> pprint.format
@@ -126,8 +126,9 @@ pub fn load_events_emtpy_aggregate_test() {
       example_bank_account.handle,
       example_bank_account.apply,
     )
-  memory_store.load_events(
-    mem_store.eventstore,
+  let event_sourcing = eventsourcing.new(mem_store, [])
+  eventsourcing.load_events(
+    event_sourcing,
     "92085b42-032c-4d7a-84de-a86d67123858",
   )
   |> pprint.format

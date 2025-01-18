@@ -2,8 +2,6 @@ import eventsourcing
 import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/erlang/process
-import gleam/int
-import gleam/io
 import gleam/list
 import gleam/otp/actor
 import gleam/pair
@@ -52,26 +50,8 @@ pub fn new(
     eventstore: actor,
     commit: commit,
     load_aggregate: load_aggregate,
+    load_events: load_commited_events,
   )
-}
-
-/// Load the currently commited events from the memory store.
-/// They are wrapped in a MemoryStoreEventEnvelop variant from the EventEnvelop type.
-pub fn load_events(
-  memory_store: MemoryStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) -> List(eventsourcing.EventEnvelop(event)) {
-  load_commited_events(memory_store, aggregate_id)
-  |> fn(events) {
-    io.println(
-      "loading: "
-      <> events |> list.length |> int.to_string
-      <> " events for Aggregate ID '"
-      <> aggregate_id
-      <> "'",
-    )
-    events
-  }
 }
 
 /// Load a aggregate based on a aggregate_id.
@@ -80,7 +60,7 @@ pub fn load_aggregate_entity(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) -> Result(entity, Nil) {
-  let commited_events = load_events(memory_store, aggregate_id)
+  let commited_events = load_commited_events(memory_store, aggregate_id)
 
   use <- bool.guard(commited_events |> list.length == 0, Error(Nil))
   let #(aggregate, sequence) =
@@ -128,7 +108,7 @@ fn load_aggregate(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate_id: eventsourcing.AggregateId,
 ) -> eventsourcing.AggregateContext(entity, command, event, error) {
-  let commited_events = load_events(memory_store, aggregate_id)
+  let commited_events = load_commited_events(memory_store, aggregate_id)
 
   let #(aggregate, sequence) =
     list.fold(
@@ -158,13 +138,6 @@ fn commit(
   let wrapped_events = wrap_events(aggregate_id, sequence, events, metadata)
   let past_events = load_commited_events(memory_store, aggregate_id)
   let events = list.append(past_events, wrapped_events)
-  io.println(
-    "storing: "
-    <> wrapped_events |> list.length |> int.to_string
-    <> " events for Aggregate ID '"
-    <> aggregate_id
-    <> "'",
-  )
   actor.send(memory_store.subject, Set(aggregate_id, events))
   wrapped_events
 }
