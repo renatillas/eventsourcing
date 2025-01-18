@@ -1,5 +1,5 @@
 name = "eventsourcing"
-version = "3.0.1"
+version = "4.0.0"
 
 # Fill out these fields if you intend to generate HTML documentation or publish
 # your project to the Hex package manager.
@@ -9,13 +9,12 @@ licences = ["Apache-2.0"]
 repository = { type = "github", user = "renatillas", repo = "eventsourcing" }
 
 [dependencies]
-gleam_stdlib = ">= 0.34.0 and < 2.0.0"
-gleam_otp = ">= 0.10.0 and < 1.0.0"
-gleam_erlang = ">= 0.25.0 and < 1.0.0"
-decode = ">= 0.2.0 and < 1.0.0"
-gleam_json = ">= 1.0.1 and < 2.0.0"
+gleam_stdlib = ">= 0.52.0 and < 2.0.0"
+gleam_otp = ">= 0.16.0 and < 1.0.0"
+gleam_erlang = ">= 0.33.0 and < 1.0.0"
+gleam_json = ">= 2.3.0 and < 3.0.0"
 
 [dev-dependencies]
-gleeunit = ">= 1.0.0 and < 2.0.0"
-birdie = ">= 1.1.8 and < 2.0.0"
-pprint = ">= 1.0.3 and < 2.0.0"
+gleeunit = ">= 1.2.0 and < 2.0.0"
+birdie = ">= 1.2.5 and < 2.0.0"
+pprint = ">= 1.0.4 and < 2.0.0"
