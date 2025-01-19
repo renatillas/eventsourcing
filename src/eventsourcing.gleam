@@ -24,8 +24,7 @@ pub type AggregateContext(entity, command, event, error) {
 }
 
 /// An EventEnvelop is a wrapper around your domain events
-/// used by the Event Stores. You can use this type constructor
-/// if the event store provides a `load_events` function.
+/// used by the Event Stores.
 pub type EventEnvelop(event) {
   MemoryStoreEventEnvelop(
     aggregate_id: AggregateId,
@@ -64,7 +63,7 @@ pub type Query(event) =
 
 /// The main record of the library. 
 /// It holds everything together and serves as a reference point 
-/// for other functions such as execute, load_aggregate_entity, and load_events.
+/// for other functions such as execute, load_aggregate_entity, and load_events
 pub opaque type EventSourcing(
   eventstore,
   entity,
@@ -108,10 +107,16 @@ pub fn new(event_store, queries) {
 
 // PUBLIC FUNCTIONS ----
 
-/// **Execute**
-/// The main function of the package. 
-/// Run execute with your event_sourcing instance and the command you want to apply.
-/// It will return a Result with Ok(Nil) or Error(your domain error) if the command failed.
+/// Execute the given command on the event sourcing instance.
+///
+/// This function loads the aggregate, handles the command,
+/// applies the resulting events, commits them to the event store,
+/// and runs any registered queries.
+///
+/// @param event_sourcing The EventSourcing instance.
+/// @param aggregate_id The ID of the aggregate to act upon.
+/// @param command The command to execute.
+/// @return A Result containing either Nil on success or an EventSourcingError on failure.
 pub fn execute(
   event_sourcing event_sourcing: EventSourcing(
     eventstore,
@@ -127,6 +132,16 @@ pub fn execute(
   execute_with_metadata(event_sourcing:, aggregate_id:, command:, metadata: [])
 }
 
+/// Execute the given command with metadata on the event sourcing instance.
+///
+/// This function works similarly to `execute`, but additionally allows
+/// passing metadata for the events.
+///
+/// @param event_sourcing The EventSourcing instance.
+/// @param aggregate_id The ID of the aggregate to act upon.
+/// @param command The command to execute.
+/// @param metadata Metadata to associate with the events.
+/// @return A Result containing either Nil on success or an EventSourcingError on failure.
 pub fn execute_with_metadata(
   event_sourcing event_sourcing: EventSourcing(
     eventstore,
@@ -164,6 +179,13 @@ pub fn execute_with_metadata(
   Ok(Nil)
 }
 
+/// Add a query to the EventSourcing instance.
+///
+/// Queries are functions that run when events are committed.
+/// They can be used for things like updating read models or sending notifications.
+///
+/// @param eventsourcing The EventSourcing instance.
+/// @param query The query function to add.
 pub fn add_query(
   eventsouring eventsourcing: EventSourcing(
     eventstore,
@@ -178,6 +200,11 @@ pub fn add_query(
   EventSourcing(..eventsourcing, queries: [query, ..eventsourcing.queries])
 }
 
+/// Load the events for a given aggregate ID.
+///
+/// @param eventsourcing The EventSourcing instance.
+/// @param aggregate_id The ID of the aggregate to load events for.
+/// @return A list of EventEnvelops containing the events for the aggregate.
 pub fn load_events(
   eventsourcing eventsourcing: EventSourcing(
     eventstore,
@@ -195,6 +222,11 @@ pub fn load_events(
   )
 }
 
+/// Load the aggregate entity for a given aggregate ID.
+///
+/// @param eventsourcing The EventSourcing instance.
+/// @param aggregate_id The ID of the aggregate to load.
+/// @return The aggregate entity.
 pub fn load_aggregate(
   eventsourcing eventsourcing: EventSourcing(
     eventstore,
