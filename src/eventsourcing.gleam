@@ -112,11 +112,6 @@ pub fn new(event_store, queries) {
 /// This function loads the aggregate, handles the command,
 /// applies the resulting events, commits them to the event store,
 /// and runs any registered queries.
-///
-/// @param event_sourcing The EventSourcing instance.
-/// @param aggregate_id The ID of the aggregate to act upon.
-/// @param command The command to execute.
-/// @return A Result containing either Nil on success or an EventSourcingError on failure.
 pub fn execute(
   event_sourcing event_sourcing: EventSourcing(
     eventstore,
@@ -136,12 +131,6 @@ pub fn execute(
 ///
 /// This function works similarly to `execute`, but additionally allows
 /// passing metadata for the events.
-///
-/// @param event_sourcing The EventSourcing instance.
-/// @param aggregate_id The ID of the aggregate to act upon.
-/// @param command The command to execute.
-/// @param metadata Metadata to associate with the events.
-/// @return A Result containing either Nil on success or an EventSourcingError on failure.
 pub fn execute_with_metadata(
   event_sourcing event_sourcing: EventSourcing(
     eventstore,
@@ -183,9 +172,6 @@ pub fn execute_with_metadata(
 ///
 /// Queries are functions that run when events are committed.
 /// They can be used for things like updating read models or sending notifications.
-///
-/// @param eventsourcing The EventSourcing instance.
-/// @param query The query function to add.
 pub fn add_query(
   eventsouring eventsourcing: EventSourcing(
     eventstore,
@@ -201,10 +187,6 @@ pub fn add_query(
 }
 
 /// Load the events for a given aggregate ID.
-///
-/// @param eventsourcing The EventSourcing instance.
-/// @param aggregate_id The ID of the aggregate to load events for.
-/// @return A list of EventEnvelops containing the events for the aggregate.
 pub fn load_events(
   eventsourcing eventsourcing: EventSourcing(
     eventstore,
@@ -223,10 +205,6 @@ pub fn load_events(
 }
 
 /// Load the aggregate entity for a given aggregate ID.
-///
-/// @param eventsourcing The EventSourcing instance.
-/// @param aggregate_id The ID of the aggregate to load.
-/// @return The aggregate entity.
 pub fn load_aggregate(
   eventsourcing eventsourcing: EventSourcing(
     eventstore,
