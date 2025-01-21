@@ -44,10 +44,13 @@ Eventsourcing is a Gleam library designed to help developers build event-sourced
 ## Features
 
 - **Event Sourcing**: Build systems based on the event sourcing pattern.
-- **In-memory Store**: Simple in-memory event store for development and testing.
+- **Event Stores**: Supports multiple event store implementations:
+  - [In-memory Store](https://github.com/renatillas/eventsourcing_inmemory): Simple in-memory event store for development and testing.
+  - [Postgres Store](https://github.com/renatillas/eventsourcing_postgres): Event store implementation using PostgreSQL.
+  - [SQLite Store](https://github.com/renatillas/eventsourcing_sqlite): Event store implementation using SQLite.
 - **Command Handling**: Handle commands and produce events.
 - **Event Application**: Apply events to update aggregates.
-
+- 
 ## Example
 
 ### Command Handling
