@@ -7,10 +7,7 @@ import gleam/pair
 import gleam/result
 
 pub opaque type MemoryStore(entity, command, event, error) {
-  MemoryStore(
-    subject: process.Subject(Message(event)),
-    empty_aggregate: eventsourcing.Aggregate(entity, command, event, error),
-  )
+  MemoryStore(subject: process.Subject(Message(event)))
 }
 
 type State(event) =
@@ -27,54 +24,15 @@ type Message(event) {
 }
 
 /// Create a new memory store record.
-pub fn new(
-  emtpy_entity empty_entity: entity,
-  handle_command_function handle: eventsourcing.Handle(
-    entity,
-    command,
-    event,
-    error,
-  ),
-  apply_function apply: eventsourcing.Apply(entity, event),
-) {
+pub fn new() {
   let assert Ok(actor) =
     actor.start(dict.new(), handle_message)
-    |> result.try(fn(subject) {
-      Ok(MemoryStore(
-        subject,
-        eventsourcing.Aggregate(empty_entity, handle:, apply:),
-      ))
-    })
+    |> result.try(fn(subject) { Ok(MemoryStore(subject)) })
   eventsourcing.EventStore(
     eventstore: actor,
     commit: commit,
-    load_aggregate: load_aggregate,
     load_events: load_commited_events,
   )
-}
-
-fn load_aggregate(
-  memory_store: MemoryStore(entity, command, event, error),
-  aggregate_id: eventsourcing.AggregateId,
-) -> eventsourcing.AggregateContext(entity, command, event, error) {
-  let commited_events = load_commited_events(memory_store, aggregate_id)
-
-  let #(aggregate, sequence) =
-    list.fold(
-      over: commited_events,
-      from: #(memory_store.empty_aggregate, 0),
-      with: fn(aggregate_and_sequence, event_envelop) {
-        let #(aggregate, _) = aggregate_and_sequence
-        #(
-          eventsourcing.Aggregate(
-            ..aggregate,
-            entity: aggregate.apply(aggregate.entity, event_envelop.payload),
-          ),
-          event_envelop.sequence,
-        )
-      },
-    )
-  eventsourcing.AggregateContext(aggregate_id:, aggregate:, sequence:)
 }
 
 fn handle_message(message: Message(event), state: State(event)) {
@@ -100,11 +58,11 @@ fn load_commited_events(
 
 fn commit(
   memory_store: MemoryStore(entity, command, event, error),
-  context: eventsourcing.AggregateContext(entity, command, event, error),
+  aggregate: eventsourcing.Aggregate(entity, command, event, error),
   events: List(event),
   metadata: List(#(String, String)),
 ) -> List(eventsourcing.EventEnvelop(event)) {
-  let eventsourcing.AggregateContext(aggregate_id, _, sequence) = context
+  let eventsourcing.Aggregate(aggregate_id, _, sequence) = aggregate
   let wrapped_events = wrap_events(aggregate_id, sequence, events, metadata)
   let past_events = load_commited_events(memory_store, aggregate_id)
   let events = list.append(past_events, wrapped_events)

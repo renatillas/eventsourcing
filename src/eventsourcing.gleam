@@ -5,22 +5,8 @@ import gleam/result
 pub type AggregateId =
   String
 
-@internal
 pub type Aggregate(entity, command, event, error) {
-  Aggregate(
-    entity: entity,
-    handle: Handle(entity, command, event, error),
-    apply: Apply(entity, event),
-  )
-}
-
-@internal
-pub type AggregateContext(entity, command, event, error) {
-  AggregateContext(
-    aggregate_id: AggregateId,
-    aggregate: Aggregate(entity, command, event, error),
-    sequence: Int,
-  )
+  Aggregate(aggregate_id: AggregateId, entity: entity, sequence: Int)
 }
 
 /// An EventEnvelop is a wrapper around your domain events
@@ -45,8 +31,7 @@ pub type EventEnvelop(event) {
 
 pub type EventSourcingError(domainerror) {
   DomainError(domainerror)
-  ImplementationError
-  EntityNotFound
+  EventStoreError(String)
 }
 
 @internal
@@ -64,17 +49,13 @@ pub type Query(event) =
 /// The main record of the library. 
 /// It holds everything together and serves as a reference point 
 /// for other functions such as execute, load_aggregate_entity, and load_events
-pub opaque type EventSourcing(
-  eventstore,
-  entity,
-  command,
-  event,
-  error,
-  aggregatecontext,
-) {
+pub opaque type EventSourcing(eventstore, entity, command, event, error) {
   EventSourcing(
     event_store: EventStore(eventstore, entity, command, event, error),
     queries: List(Query(event)),
+    handle: Handle(entity, command, event, error),
+    apply: Apply(entity, event),
+    empty_state: entity,
   )
 }
 
@@ -82,12 +63,10 @@ pub opaque type EventSourcing(
 pub type EventStore(eventstore, entity, command, event, error) {
   EventStore(
     eventstore: eventstore,
-    load_aggregate: fn(eventstore, AggregateId) ->
-      AggregateContext(entity, command, event, error),
     load_events: fn(eventstore, AggregateId) -> List(EventEnvelop(event)),
     commit: fn(
       eventstore,
-      AggregateContext(entity, command, event, error),
+      Aggregate(entity, command, event, error),
       List(event),
       List(#(String, String)),
     ) ->
@@ -101,8 +80,8 @@ pub type EventStore(eventstore, entity, command, event, error) {
 /// an Event Store and a list of queries you want
 /// run whenever events are commited.
 ///
-pub fn new(event_store, queries) {
-  EventSourcing(event_store:, queries:)
+pub fn new(event_store, queries, handle, apply, empty_state) {
+  EventSourcing(event_store:, queries:, handle:, apply:, empty_state:)
 }
 
 // PUBLIC FUNCTIONS ----
@@ -119,7 +98,6 @@ pub fn execute(
     command,
     event,
     error,
-    aggregatecontext,
   ),
   aggregate_id aggregate_id: AggregateId,
   command command: command,
@@ -138,34 +116,76 @@ pub fn execute_with_metadata(
     command,
     event,
     error,
-    aggregatecontext,
   ),
   aggregate_id aggregate_id: AggregateId,
   command command: command,
   metadata metadata: List(#(String, String)),
 ) -> Result(Nil, EventSourcingError(error)) {
-  let aggregate_context =
-    event_sourcing.event_store.load_aggregate(
-      event_sourcing.event_store.eventstore,
-      aggregate_id,
-    )
-  let aggregate = aggregate_context.aggregate
+  let aggregate_context = load_aggregate(event_sourcing, aggregate_id)
+  case aggregate_context {
+    Ok(aggregate_context) ->
+      execute_with_aggregate_context(
+        event_sourcing,
+        aggregate_context,
+        command,
+        metadata,
+      )
+    Error(error) -> Error(error)
+  }
+}
+
+fn execute_with_aggregate_context(
+  eventsourcing eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+  ),
+  aggregate aggregate: Aggregate(entity, command, event, error),
+  command command: command,
+  metadata metadata: List(#(String, String)),
+) -> Result(Nil, EventSourcingError(error)) {
   let entity = aggregate.entity
   use events <- result.try(
-    aggregate.handle(entity, command)
+    eventsourcing.handle(entity, command)
     |> result.map_error(fn(error) { DomainError(error) }),
   )
-  events |> list.map(aggregate.apply(entity, _))
+  events |> list.map(eventsourcing.apply(entity, _))
   let commited_events =
-    event_sourcing.event_store.commit(
-      event_sourcing.event_store.eventstore,
-      aggregate_context,
+    eventsourcing.event_store.commit(
+      eventsourcing.event_store.eventstore,
+      aggregate,
       events,
       metadata,
     )
-  event_sourcing.queries
-  |> list.map(fn(query) { query(aggregate_id, commited_events) })
+  eventsourcing.queries
+  |> list.map(fn(query) { query(aggregate.aggregate_id, commited_events) })
   Ok(Nil)
+}
+
+pub fn load_aggregate(
+  eventsourcing eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+  ),
+  aggregate_id aggregate_id: AggregateId,
+) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
+  let commited_events = load_events(eventsourcing, aggregate_id)
+
+  let #(instance, sequence) =
+    list.fold(
+      over: commited_events,
+      from: #(eventsourcing.empty_state, 0),
+      with: fn(aggregate_and_sequence, event_envelop) {
+        let #(aggregate, sequence) = aggregate_and_sequence
+        #(eventsourcing.apply(aggregate, event_envelop.payload), sequence + 1)
+      },
+    )
+  Ok(Aggregate(aggregate_id, instance, sequence))
 }
 
 /// Add a query to the EventSourcing instance.
@@ -179,7 +199,6 @@ pub fn add_query(
     command,
     event,
     error,
-    aggregatecontext,
   ),
   query query,
 ) {
@@ -194,7 +213,6 @@ pub fn load_events(
     command,
     event,
     error,
-    aggregatecontext,
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> List(EventEnvelop(event)) {
@@ -202,22 +220,4 @@ pub fn load_events(
     eventsourcing.event_store.eventstore,
     aggregate_id,
   )
-}
-
-/// Load the aggregate entity for a given aggregate ID.
-pub fn load_aggregate(
-  eventsourcing eventsourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    aggregatecontext,
-  ),
-  aggregate_id aggregate_id: AggregateId,
-) -> entity {
-  eventsourcing.event_store.load_aggregate(
-    eventsourcing.event_store.eventstore,
-    aggregate_id,
-  ).aggregate.entity
 }
