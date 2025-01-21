@@ -1,7 +1,8 @@
 import birdie
 import eventsourcing
 import example_bank_account
-import gleam/io
+import gleam/erlang/process
+import gleam/list
 import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
@@ -790,6 +791,57 @@ pub fn concurrent_snapshot_test() {
         }
       }
       None -> panic as "Expected snapshot for account2"
+    }
+  }
+}
+
+// Test snapshot with very large event counts
+pub fn large_event_count_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+    |> eventsourcing.with_snapshots(eventsourcing.SnapshotConfig(1000))
+
+  let account_id = "large-count-test"
+
+  // Create initial state
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.OpenAccount(account_id),
+  )
+  |> should.be_ok
+
+  // Generate large number of events (implementation dependent)
+  list.range(1, 10)
+  |> list.each(fn(_) {
+    process.sleep(1)
+    list.range(1, 1000)
+    |> list.each(fn(_) {
+      eventsourcing.execute(
+        event_sourcing,
+        account_id,
+        example_bank_account.DepositMoney(1.0),
+      )
+    })
+  })
+
+  // Verify system can handle large event counts
+  eventsourcing.load_aggregate(event_sourcing, account_id)
+  |> should.be_ok
+  |> fn(result) {
+    case result {
+      eventsourcing.Aggregate(
+        aggregate_id: "large-count-test",
+        sequence: 10_001,
+        entity: example_bank_account.BankAccount(balance),
+      ) -> balance |> should.equal(1000.0)
+      _ -> panic as "Unexpected account state"
     }
   }
 }
