@@ -1,15 +1,13 @@
 ---
 version: 1.2.5
 title: query event
-file: ./test/eventsourcing_test.gleam
-test_name: query_test
 ---
 #(
   "92085b42-032c-4d7a-84de-a86d67123858",
   [
     MemoryStoreEventEnvelop(
       "92085b42-032c-4d7a-84de-a86d67123858",
-      1,
+      2,
       AccountOpened("92085b42-032c-4d7a-84de-a86d67123858"),
       [],
     ),
