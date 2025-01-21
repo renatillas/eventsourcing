@@ -4,4 +4,8 @@ title: load aggregate entity not found in the store
 file: ./test/eventsourcing_test.gleam
 test_name: load_emtpy_aggregate_test
 ---
-UnopenedBankAccount
+Ok(Aggregate(
+  "92085b42-032c-4d7a-84de-a86d67123858",
+  UnopenedBankAccount,
+  0,
+))
