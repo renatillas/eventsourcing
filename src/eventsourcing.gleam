@@ -189,7 +189,10 @@ pub fn execute_with_metadata(
   // Check if we need to create a snapshot
   case eventsourcing.snapshot_config {
     Some(config) -> {
-      case sequence % config.snapshot_frequency == 0 {
+      case
+        sequence % config.snapshot_frequency == 0
+        && config.snapshot_frequency != 0
+      {
         True -> {
           let snapshot =
             Snapshot(

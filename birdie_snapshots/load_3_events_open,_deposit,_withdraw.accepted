@@ -1,23 +1,25 @@
 ---
 version: 1.2.5
-title: load events
+title: load 3 events: open, deposit, withdraw
+file: ./test/eventsourcing_test.gleam
+test_name: load_events_test
 ---
 Ok([
   MemoryStoreEventEnvelop(
     "92085b42-032c-4d7a-84de-a86d67123858",
-    2,
+    1,
     AccountOpened("92085b42-032c-4d7a-84de-a86d67123858"),
     [],
   ),
   MemoryStoreEventEnvelop(
     "92085b42-032c-4d7a-84de-a86d67123858",
-    3,
+    2,
     CustomerDepositedCash(10.0, 10.0),
     [],
   ),
   MemoryStoreEventEnvelop(
     "92085b42-032c-4d7a-84de-a86d67123858",
-    4,
+    3,
     CustomerWithdrewCash(5.99, 4.01),
     [],
   ),

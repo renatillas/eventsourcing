@@ -1,0 +1,7 @@
+---
+version: 1.2.5
+title: load aggregate not found raises error EntityNotFound
+file: ./test/eventsourcing_test.gleam
+test_name: load_emtpy_aggregate_test
+---
+Error(EntityNotFound)
