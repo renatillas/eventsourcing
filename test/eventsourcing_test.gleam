@@ -1,7 +1,6 @@
 import birdie
 import eventsourcing
 import example_bank_account
-import gleam/io
 import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
@@ -503,4 +502,54 @@ pub fn disable_snapshots_test() {
   eventsourcing.get_latest_snapshot(event_sourcing, account_id)
   |> should.be_ok
   |> should.equal(None)
+}
+
+pub fn handle_invalid_command_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+
+  // Test withdrawing from unopened account
+  eventsourcing.execute(
+    event_sourcing,
+    "test-account",
+    example_bank_account.WithDrawMoney(100.0),
+  )
+  |> should.be_error
+  |> should.equal(eventsourcing.DomainError(
+    example_bank_account.CantOperateOnUnopenedAccount,
+  ))
+}
+
+pub fn invalid_deposit_amount_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+
+  eventsourcing.execute(
+    event_sourcing,
+    "test-account",
+    example_bank_account.OpenAccount("test-account"),
+  )
+  |> should.be_ok
+
+  eventsourcing.execute(
+    event_sourcing,
+    "test-account",
+    example_bank_account.DepositMoney(-50.0),
+  )
+  |> should.be_error
+  |> should.equal(eventsourcing.DomainError(
+    example_bank_account.CantDepositNegativeAmount,
+  ))
 }
