@@ -80,7 +80,7 @@ pub opaque type EventSourcing(eventstore, entity, command, event, error) {
 pub type EventStore(eventstore, entity, command, event, error) {
   EventStore(
     eventstore: eventstore,
-    load_events: fn(eventstore, AggregateId) ->
+    load_events: fn(eventstore, AggregateId, Int) ->
       Result(List(EventEnvelop(event)), EventSourcingError(error)),
     commit: fn(
       eventstore,
@@ -218,21 +218,23 @@ pub fn execute_with_metadata(
 }
 
 fn load_aggregate_or_emtpy_aggregate(
-  eventsourcing eventsourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-  ),
-  aggregate_id aggregate_id: AggregateId,
+  eventsourcing: EventSourcing(eventstore, entity, command, event, error),
+  aggregate_id: AggregateId,
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
   use maybe_snapshot <- result.try(eventsourcing.event_store.load_snapshot(
     eventsourcing.event_store.eventstore,
     aggregate_id,
   ))
 
-  use events <- result.map(load_events(eventsourcing, aggregate_id))
+  let start_from = case maybe_snapshot {
+    Some(snapshot) -> snapshot.sequence
+    None -> 0
+  }
+  use events <- result.map(eventsourcing.event_store.load_events(
+    eventsourcing.event_store.eventstore,
+    aggregate_id,
+    start_from,
+  ))
 
   let #(starting_state, starting_sequence) = case maybe_snapshot {
     None -> #(eventsourcing.empty_state, 0)
@@ -241,7 +243,6 @@ fn load_aggregate_or_emtpy_aggregate(
 
   let #(instance, sequence) =
     events
-    |> list.drop_while(fn(event) { event.sequence <= starting_sequence })
     |> list.fold(
       from: #(starting_state, starting_sequence),
       with: fn(aggregate_and_sequence, event_envelop) {
@@ -302,6 +303,7 @@ pub fn load_events(
   eventsourcing.event_store.load_events(
     eventsourcing.event_store.eventstore,
     aggregate_id,
+    0,
   )
 }
 
