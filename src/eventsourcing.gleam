@@ -1,3 +1,4 @@
+import gleam/io
 import gleam/list
 import gleam/result
 
@@ -32,6 +33,7 @@ pub type EventEnvelop(event) {
 pub type EventSourcingError(domainerror) {
   DomainError(domainerror)
   EventStoreError(String)
+  EntityNotFound
 }
 
 @internal
@@ -63,14 +65,15 @@ pub opaque type EventSourcing(eventstore, entity, command, event, error) {
 pub type EventStore(eventstore, entity, command, event, error) {
   EventStore(
     eventstore: eventstore,
-    load_events: fn(eventstore, AggregateId) -> List(EventEnvelop(event)),
+    load_events: fn(eventstore, AggregateId) ->
+      Result(List(EventEnvelop(event)), EventSourcingError(error)),
     commit: fn(
       eventstore,
       Aggregate(entity, command, event, error),
       List(event),
       List(#(String, String)),
     ) ->
-      List(EventEnvelop(event)),
+      Result(List(EventEnvelop(event)), EventSourcingError(error)),
   )
 }
 
@@ -121,7 +124,8 @@ pub fn execute_with_metadata(
   command command: command,
   metadata metadata: List(#(String, String)),
 ) -> Result(Nil, EventSourcingError(error)) {
-  let aggregate_context = load_aggregate(event_sourcing, aggregate_id)
+  let aggregate_context =
+    load_aggregate_without_error(event_sourcing, aggregate_id)
   case aggregate_context {
     Ok(aggregate_context) ->
       execute_with_aggregate_context(
@@ -147,21 +151,46 @@ fn execute_with_aggregate_context(
   metadata metadata: List(#(String, String)),
 ) -> Result(Nil, EventSourcingError(error)) {
   let entity = aggregate.entity
+
   use events <- result.try(
     eventsourcing.handle(entity, command)
     |> result.map_error(fn(error) { DomainError(error) }),
   )
   events |> list.map(eventsourcing.apply(entity, _))
-  let commited_events =
-    eventsourcing.event_store.commit(
-      eventsourcing.event_store.eventstore,
-      aggregate,
-      events,
-      metadata,
-    )
+  use commited_events <- result.try(eventsourcing.event_store.commit(
+    eventsourcing.event_store.eventstore,
+    aggregate,
+    events,
+    metadata,
+  ))
+
   eventsourcing.queries
   |> list.map(fn(query) { query(aggregate.aggregate_id, commited_events) })
   Ok(Nil)
+}
+
+fn load_aggregate_without_error(
+  eventsourcing eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+  ),
+  aggregate_id aggregate_id: AggregateId,
+) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
+  use commited_events <- result.map(load_events(eventsourcing, aggregate_id))
+
+  let #(instance, sequence) =
+    list.fold(
+      over: commited_events,
+      from: #(eventsourcing.empty_state, 0),
+      with: fn(aggregate_and_sequence, event_envelop) {
+        let #(aggregate, sequence) = aggregate_and_sequence
+        #(eventsourcing.apply(aggregate, event_envelop.payload), sequence + 1)
+      },
+    )
+  Aggregate(aggregate_id, instance, sequence)
 }
 
 pub fn load_aggregate(
@@ -174,18 +203,13 @@ pub fn load_aggregate(
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
-  let commited_events = load_events(eventsourcing, aggregate_id)
-
-  let #(instance, sequence) =
-    list.fold(
-      over: commited_events,
-      from: #(eventsourcing.empty_state, 0),
-      with: fn(aggregate_and_sequence, event_envelop) {
-        let #(aggregate, sequence) = aggregate_and_sequence
-        #(eventsourcing.apply(aggregate, event_envelop.payload), sequence + 1)
-      },
-    )
-  Ok(Aggregate(aggregate_id, instance, sequence))
+  load_aggregate_without_error(eventsourcing, aggregate_id)
+  |> result.try(fn(aggregate) {
+    case aggregate.entity == eventsourcing.empty_state {
+      True -> Error(EntityNotFound)
+      False -> Ok(aggregate)
+    }
+  })
 }
 
 /// Add a query to the EventSourcing instance.
@@ -215,7 +239,7 @@ pub fn load_events(
     error,
   ),
   aggregate_id aggregate_id: AggregateId,
-) -> List(EventEnvelop(event)) {
+) -> Result(List(EventEnvelop(event)), EventSourcingError(error)) {
   eventsourcing.event_store.load_events(
     eventsourcing.event_store.eventstore,
     aggregate_id,

@@ -1,10 +1,10 @@
 ---
-version: 1.1.8
+version: 1.2.5
 title: load events
 file: ./test/eventsourcing_test.gleam
 test_name: load_events_test
 ---
-[
+Ok([
   MemoryStoreEventEnvelop(
     "92085b42-032c-4d7a-84de-a86d67123858",
     1,
@@ -23,4 +23,4 @@ test_name: load_events_test
     CustomerWithdrewCash(5.99, 4.01),
     [],
   ),
-]
+])

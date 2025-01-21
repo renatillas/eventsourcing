@@ -29,12 +29,7 @@ pub fn execute_test() {
 }
 
 pub fn query_test() {
-  let query = fn(
-    aggregate_id: String,
-    events: List(
-      eventsourcing.EventEnvelop(example_bank_account.BankAccountEvent),
-    ),
-  ) {
+  let query = fn(aggregate_id, events) {
     #(aggregate_id, events)
     |> pprint.format
     |> birdie.snap(title: "query event")
