@@ -1,11 +1,13 @@
 ---
 version: 1.2.5
-title: load events with metadata
+title: load event with metadata
+file: ./test/eventsourcing_test.gleam
+test_name: load_events_with_metadata_test
 ---
 Ok([
   MemoryStoreEventEnvelop(
     "92085b42-032c-4d7a-84de-a86d67123858",
-    2,
+    1,
     AccountOpened("92085b42-032c-4d7a-84de-a86d67123858"),
     [
       #("Hello", "World"),
