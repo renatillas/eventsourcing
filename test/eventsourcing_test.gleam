@@ -1,6 +1,8 @@
 import birdie
 import eventsourcing
 import example_bank_account
+import gleam/io
+import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
 import inmemory as memory_store
@@ -191,4 +193,314 @@ pub fn load_emtpy_aggregate_test() {
   )
   |> pprint.format
   |> birdie.snap(title: "load aggregate entity not found in the store")
+}
+
+pub fn load_emtpy_aggregate_with_snapshots_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+    |> eventsourcing.with_snapshots(eventsourcing.SnapshotConfig(2))
+
+  eventsourcing.execute(
+    event_sourcing,
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    example_bank_account.OpenAccount("92085b42-032c-4d7a-84de-a86d67123858"),
+  )
+  |> should.be_ok
+  |> should.equal(Nil)
+
+  eventsourcing.execute(
+    event_sourcing,
+    "92085b42-032c-4d7a-84de-a86d67123858",
+    example_bank_account.DepositMoney(10.0),
+  )
+  |> should.be_ok
+  |> should.equal(Nil)
+
+  eventsourcing.load_aggregate(
+    event_sourcing,
+    "92085b42-032c-4d7a-84de-a86d67123858",
+  )
+  |> pprint.format
+  |> birdie.snap(title: "load aggregate entity with snapshots")
+}
+
+// Test creating and loading a snapshot after a specific number of events
+pub fn snapshot_creation_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+    |> eventsourcing.with_snapshots(eventsourcing.SnapshotConfig(2))
+  // Snapshot every 2 events
+
+  let account_id = "92085b42-032c-4d7a-84de-a86d67123858"
+
+  // Open account (1st event)
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.OpenAccount(account_id),
+  )
+  |> should.be_ok
+
+  // Check no snapshot yet
+  eventsourcing.get_latest_snapshot(event_sourcing, account_id)
+  |> should.be_ok
+  |> should.equal(None)
+
+  // Deposit money (2nd event - should trigger snapshot)
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.DepositMoney(100.0),
+  )
+  |> should.be_ok
+
+  // Check snapshot exists and has correct state
+  eventsourcing.get_latest_snapshot(event_sourcing, account_id)
+  |> should.be_ok
+  |> fn(result) {
+    case result {
+      Some(snapshot) -> {
+        snapshot.sequence |> should.equal(2)
+        snapshot.entity |> should.equal(example_bank_account.BankAccount(100.0))
+      }
+      None -> panic as "Expected snapshot but got None"
+    }
+  }
+}
+
+// Test rebuilding aggregate from snapshot and subsequent events
+pub fn rebuild_from_snapshot_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+    |> eventsourcing.with_snapshots(eventsourcing.SnapshotConfig(2))
+
+  let account_id = "92085b42-032c-4d7a-84de-a86d67123858"
+
+  // Create initial events
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.OpenAccount(account_id),
+  )
+  |> should.be_ok
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.DepositMoney(100.0),
+  )
+  |> should.be_ok
+  // Should create snapshot
+
+  // Add more events after snapshot
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.WithDrawMoney(30.0),
+  )
+  |> should.be_ok
+
+  // Load aggregate and verify state
+  eventsourcing.load_aggregate(event_sourcing, account_id)
+  |> should.be_ok
+  |> fn(aggregate) {
+    case aggregate.entity {
+      example_bank_account.BankAccount(balance) -> balance |> should.equal(70.0)
+      _ -> panic as "Unexpected aggregate state"
+    }
+  }
+}
+
+// Test snapshot frequency
+pub fn snapshot_frequency_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+    |> eventsourcing.with_snapshots(eventsourcing.SnapshotConfig(3))
+  // Snapshot every 3 events
+
+  let account_id = "92085b42-032c-4d7a-84de-a86d67123858"
+
+  // Execute 5 events
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.OpenAccount(account_id),
+  )
+  |> should.be_ok
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.DepositMoney(100.0),
+  )
+  |> should.be_ok
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.WithDrawMoney(20.0),
+  )
+  |> should.be_ok
+  // Should create first snapshot
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.DepositMoney(50.0),
+  )
+  |> should.be_ok
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.WithDrawMoney(10.0),
+  )
+  |> should.be_ok
+
+  // Verify snapshot sequence is correct (should be at event 3)
+  eventsourcing.get_latest_snapshot(event_sourcing, account_id)
+  |> should.be_ok
+  |> fn(result) {
+    case result {
+      Some(snapshot) -> {
+        snapshot.sequence |> should.equal(3)
+        case snapshot.entity {
+          example_bank_account.BankAccount(balance) ->
+            balance |> should.equal(80.0)
+          _ -> panic as "Unexpected snapshot state"
+        }
+      }
+      None -> panic as "Expected snapshot but got None"
+    }
+  }
+}
+
+// Test multiple aggregates with snapshots
+pub fn multiple_aggregates_snapshot_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+    |> eventsourcing.with_snapshots(eventsourcing.SnapshotConfig(2))
+
+  let account1_id = "account-1"
+  let account2_id = "account-2"
+
+  // Create events for first account
+  eventsourcing.execute(
+    event_sourcing,
+    account1_id,
+    example_bank_account.OpenAccount(account1_id),
+  )
+  |> should.be_ok
+  eventsourcing.execute(
+    event_sourcing,
+    account1_id,
+    example_bank_account.DepositMoney(100.0),
+  )
+  |> should.be_ok
+  // Should create snapshot for account1
+
+  // Create events for second account
+  eventsourcing.execute(
+    event_sourcing,
+    account2_id,
+    example_bank_account.OpenAccount(account2_id),
+  )
+  |> should.be_ok
+  eventsourcing.execute(
+    event_sourcing,
+    account2_id,
+    example_bank_account.DepositMoney(200.0),
+  )
+  |> should.be_ok
+  // Should create snapshot for account2
+
+  // Verify both accounts have correct snapshots
+  eventsourcing.get_latest_snapshot(event_sourcing, account1_id)
+  |> should.be_ok
+  |> fn(result) {
+    case result {
+      Some(snapshot) -> {
+        case snapshot.entity {
+          example_bank_account.BankAccount(balance) ->
+            balance |> should.equal(100.0)
+          _ -> panic as "Unexpected snapshot state for account1"
+        }
+      }
+      None -> panic as "Expected snapshot for account1 but got None"
+    }
+  }
+
+  eventsourcing.get_latest_snapshot(event_sourcing, account2_id)
+  |> should.be_ok
+  |> fn(result) {
+    case result {
+      Some(snapshot) -> {
+        case snapshot.entity {
+          example_bank_account.BankAccount(balance) ->
+            balance |> should.equal(200.0)
+          _ -> panic as "Unexpected snapshot state for account2"
+        }
+      }
+      None -> panic as "Expected snapshot for account2 but got None"
+    }
+  }
+}
+
+// Test disabling snapshots
+pub fn disable_snapshots_test() {
+  let event_sourcing =
+    eventsourcing.new(
+      memory_store.new(),
+      [],
+      example_bank_account.handle,
+      example_bank_account.apply,
+      example_bank_account.UnopenedBankAccount,
+    )
+  // Don't call with_snapshots
+
+  let account_id = "92085b42-032c-4d7a-84de-a86d67123858"
+
+  // Execute some events
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.OpenAccount(account_id),
+  )
+  |> should.be_ok
+  eventsourcing.execute(
+    event_sourcing,
+    account_id,
+    example_bank_account.DepositMoney(100.0),
+  )
+  |> should.be_ok
+
+  // Verify no snapshots were created
+  eventsourcing.get_latest_snapshot(event_sourcing, account_id)
+  |> should.be_ok
+  |> should.equal(None)
 }

@@ -1,5 +1,7 @@
+import birl
 import gleam/io
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
 
 // TYPES ----
@@ -8,6 +10,19 @@ pub type AggregateId =
 
 pub type Aggregate(entity, command, event, error) {
   Aggregate(aggregate_id: AggregateId, entity: entity, sequence: Int)
+}
+
+pub type Snapshot(entity) {
+  Snapshot(
+    aggregate_id: AggregateId,
+    entity: entity,
+    sequence: Int,
+    timestamp: Int,
+  )
+}
+
+pub type SnapshotConfig {
+  SnapshotConfig(snapshot_frequency: Int)
 }
 
 /// An EventEnvelop is a wrapper around your domain events
@@ -58,6 +73,7 @@ pub opaque type EventSourcing(eventstore, entity, command, event, error) {
     handle: Handle(entity, command, event, error),
     apply: Apply(entity, event),
     empty_state: entity,
+    snapshot_config: Option(SnapshotConfig),
   )
 }
 
@@ -73,7 +89,11 @@ pub type EventStore(eventstore, entity, command, event, error) {
       List(event),
       List(#(String, String)),
     ) ->
-      Result(List(EventEnvelop(event)), EventSourcingError(error)),
+      Result(#(List(EventEnvelop(event)), Int), EventSourcingError(error)),
+    // New optional snapshot methods
+    save_snapshot: fn(eventstore, Snapshot(entity)) -> Nil,
+    load_snapshot: fn(eventstore, AggregateId) ->
+      Result(Option(Snapshot(entity)), EventSourcingError(error)),
   )
 }
 
@@ -84,7 +104,21 @@ pub type EventStore(eventstore, entity, command, event, error) {
 /// run whenever events are commited.
 ///
 pub fn new(event_store, queries, handle, apply, empty_state) {
-  EventSourcing(event_store:, queries:, handle:, apply:, empty_state:)
+  EventSourcing(
+    event_store:,
+    queries:,
+    handle:,
+    apply:,
+    empty_state:,
+    snapshot_config: None,
+  )
+}
+
+pub fn with_snapshots(
+  event_sourcing: EventSourcing(eventstore, entity, command, event, error),
+  config: SnapshotConfig,
+) -> EventSourcing(eventstore, entity, command, event, error) {
+  EventSourcing(..event_sourcing, snapshot_config: Some(config))
 }
 
 // PUBLIC FUNCTIONS ----
@@ -95,50 +129,6 @@ pub fn new(event_store, queries, handle, apply, empty_state) {
 /// applies the resulting events, commits them to the event store,
 /// and runs any registered queries.
 pub fn execute(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-  ),
-  aggregate_id aggregate_id: AggregateId,
-  command command: command,
-) -> Result(Nil, EventSourcingError(error)) {
-  execute_with_metadata(event_sourcing:, aggregate_id:, command:, metadata: [])
-}
-
-/// Execute the given command with metadata on the event sourcing instance.
-///
-/// This function works similarly to `execute`, but additionally allows
-/// passing metadata for the events.
-pub fn execute_with_metadata(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-  ),
-  aggregate_id aggregate_id: AggregateId,
-  command command: command,
-  metadata metadata: List(#(String, String)),
-) -> Result(Nil, EventSourcingError(error)) {
-  let aggregate_context =
-    load_aggregate_without_error(event_sourcing, aggregate_id)
-  case aggregate_context {
-    Ok(aggregate_context) ->
-      execute_with_aggregate_context(
-        event_sourcing,
-        aggregate_context,
-        command,
-        metadata,
-      )
-    Error(error) -> Error(error)
-  }
-}
-
-fn execute_with_aggregate_context(
   eventsourcing eventsourcing: EventSourcing(
     eventstore,
     entity,
@@ -146,30 +136,86 @@ fn execute_with_aggregate_context(
     event,
     error,
   ),
-  aggregate aggregate: Aggregate(entity, command, event, error),
+  aggregate_id aggregate_id: AggregateId,
+  command command: command,
+) -> Result(Nil, EventSourcingError(error)) {
+  execute_with_metadata(eventsourcing:, aggregate_id:, command:, metadata: [])
+}
+
+/// Execute the given command with metadata on the event sourcing instance.
+///
+/// This function works similarly to `execute`, but additionally allows
+/// passing metadata for the events.
+pub fn execute_with_metadata(
+  eventsourcing eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+  ),
+  aggregate_id aggregate_id: AggregateId,
   command command: command,
   metadata metadata: List(#(String, String)),
 ) -> Result(Nil, EventSourcingError(error)) {
+  use aggregate <- result.try(load_aggregate_or_emtpy_aggregate(
+    eventsourcing,
+    aggregate_id,
+  ))
   let entity = aggregate.entity
 
   use events <- result.try(
     eventsourcing.handle(entity, command)
     |> result.map_error(fn(error) { DomainError(error) }),
   )
-  events |> list.map(eventsourcing.apply(entity, _))
-  use commited_events <- result.try(eventsourcing.event_store.commit(
-    eventsourcing.event_store.eventstore,
-    aggregate,
-    events,
-    metadata,
-  ))
+
+  let post_command_aggregate =
+    Aggregate(
+      ..aggregate,
+      entity: events
+        |> list.fold(aggregate.entity, fn(event, entity) {
+          eventsourcing.apply(event, entity)
+        }),
+    )
+
+  use #(commited_events, sequence) <- result.try(
+    eventsourcing.event_store.commit(
+      eventsourcing.event_store.eventstore,
+      post_command_aggregate,
+      events,
+      metadata,
+    ),
+  )
+
+  // Check if we need to create a snapshot
+  case eventsourcing.snapshot_config {
+    Some(config) -> {
+      case sequence % config.snapshot_frequency == 0 {
+        True -> {
+          let snapshot =
+            Snapshot(
+              aggregate_id: aggregate.aggregate_id,
+              entity: post_command_aggregate.entity,
+              sequence: sequence,
+              timestamp: birl.to_unix(birl.now()),
+            )
+          eventsourcing.event_store.save_snapshot(
+            eventsourcing.event_store.eventstore,
+            snapshot,
+          )
+        }
+        False -> Nil
+      }
+    }
+    None -> Nil
+  }
 
   eventsourcing.queries
   |> list.map(fn(query) { query(aggregate.aggregate_id, commited_events) })
   Ok(Nil)
 }
 
-fn load_aggregate_without_error(
+fn load_aggregate_or_emtpy_aggregate(
   eventsourcing eventsourcing: EventSourcing(
     eventstore,
     entity,
@@ -179,12 +225,23 @@ fn load_aggregate_without_error(
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
-  use commited_events <- result.map(load_events(eventsourcing, aggregate_id))
+  use maybe_snapshot <- result.try(eventsourcing.event_store.load_snapshot(
+    eventsourcing.event_store.eventstore,
+    aggregate_id,
+  ))
+
+  use events <- result.map(load_events(eventsourcing, aggregate_id))
+
+  let #(starting_state, starting_sequence) = case maybe_snapshot {
+    None -> #(eventsourcing.empty_state, 0)
+    Some(snapshot) -> #(snapshot.entity, snapshot.sequence)
+  }
 
   let #(instance, sequence) =
-    list.fold(
-      over: commited_events,
-      from: #(eventsourcing.empty_state, 0),
+    events
+    |> list.drop_while(fn(event) { event.sequence <= starting_sequence })
+    |> list.fold(
+      from: #(starting_state, starting_sequence),
       with: fn(aggregate_and_sequence, event_envelop) {
         let #(aggregate, sequence) = aggregate_and_sequence
         #(eventsourcing.apply(aggregate, event_envelop.payload), sequence + 1)
@@ -203,7 +260,7 @@ pub fn load_aggregate(
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
-  load_aggregate_without_error(eventsourcing, aggregate_id)
+  load_aggregate_or_emtpy_aggregate(eventsourcing, aggregate_id)
   |> result.try(fn(aggregate) {
     case aggregate.entity == eventsourcing.empty_state {
       True -> Error(EntityNotFound)
@@ -244,4 +301,29 @@ pub fn load_events(
     eventsourcing.event_store.eventstore,
     aggregate_id,
   )
+}
+
+/// Get the latest snapshot for a given aggregate ID.
+/// Returns None if no snapshot exists or if snapshots are not configured.
+pub fn get_latest_snapshot(
+  eventsourcing eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+  ),
+  aggregate_id aggregate_id: AggregateId,
+) -> Result(Option(Snapshot(entity)), EventSourcingError(error)) {
+  // If snapshots are not configured, return None
+  case eventsourcing.snapshot_config {
+    None -> Ok(None)
+    Some(_) -> {
+      // Load snapshot from event store
+      eventsourcing.event_store.load_snapshot(
+        eventsourcing.event_store.eventstore,
+        aggregate_id,
+      )
+    }
+  }
 }

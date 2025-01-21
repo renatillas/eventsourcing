@@ -1,5 +1,5 @@
 name = "eventsourcing"
-version = "5.0.0"
+version = "5.1.0"
 
 # Fill out these fields if you intend to generate HTML documentation or publish
 # your project to the Hex package manager.
@@ -10,6 +10,7 @@ repository = { type = "github", user = "renatillas", repo = "eventsourcing" }
 
 [dependencies]
 gleam_stdlib = ">= 0.52.0 and < 2.0.0"
+birl = ">= 1.8.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.2.0 and < 2.0.0"

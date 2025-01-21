@@ -1,5 +1,5 @@
 ---
-version: 1.1.8
+version: 1.2.5
 title: execute without metadata
 file: ./test/eventsourcing_test.gleam
 test_name: execute_test
