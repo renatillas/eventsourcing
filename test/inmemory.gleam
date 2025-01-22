@@ -160,11 +160,12 @@ fn handle_snapshot_message(
 fn save_snapshot(
   memory_store: MemoryStore(entity, command, event, error),
   snapshot: eventsourcing.Snapshot(entity),
-) -> Nil {
+) -> Result(Nil, EventSourcingError(error)) {
   actor.send(
     memory_store.snapshot_subject,
     SetSnapshot(snapshot.aggregate_id, snapshot),
   )
+  |> Ok
 }
 
 fn load_snapshot(
