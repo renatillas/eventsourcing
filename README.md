@@ -30,6 +30,7 @@
 - [Example](#example)
   - [Command Handling](#command-handling)
   - [Event Application](#event-application)
+  - [Snapshot Configuration](#snapshot-configuration)
   - [Running the Example](#running-the-example)
 - [Philosophy](#philosophy)
 - [Installation](#installation)
@@ -39,7 +40,7 @@
 
 ## Introduction
 
-Eventsourcing is a Gleam library designed to help developers build event-sourced systems. Event sourcing is a pattern where changes to the application's state are stored as a sequence of events. This allows for better traceability, easier debugging, and the ability to recreate the application's state at any point in time.
+Eventsourcing is a Gleam library designed to help developers build event-sourced systems. Event sourcing is a pattern where changes to the application's state are stored as a sequence of events. This library provides a simple, type-safe way to implement event sourcing in your Gleam applications.
 
 ## Features
 
@@ -48,9 +49,11 @@ Eventsourcing is a Gleam library designed to help developers build event-sourced
   - [In-memory Store](https://github.com/renatillas/eventsourcing_inmemory): Simple in-memory event store for development and testing.
   - [Postgres Store](https://github.com/renatillas/eventsourcing_postgres): Event store implementation using PostgreSQL.
   - [SQLite Store](https://github.com/renatillas/eventsourcing_sqlite): Event store implementation using SQLite.
-- **Command Handling**: Handle commands and produce events.
+- **Command Handling**: Handle commands and produce events with robust error handling.
 - **Event Application**: Apply events to update aggregates.
-- 
+- **Snapshotting**: Optimize aggregate rebuilding with configurable snapshots.
+- **Type-safe Error Handling**: Comprehensive error types and Result-based API.
+
 ## Example
 
 ### Command Handling
@@ -58,11 +61,6 @@ Eventsourcing is a Gleam library designed to help developers build event-sourced
 ```gleam
 import eventsourcing
 import eventsourcing/memory_store
-
-import gleam/result
-
-pub const bank_account_event_type = "BankAccountEvent"
-pub const bank_account_type = "BankAccount"
 
 pub type BankAccount {
   BankAccount(balance: Float)
@@ -101,13 +99,6 @@ pub fn handle(
         False -> Error(CantDepositNegativeAmount)
       }
     }
-    BankAccount(balance), WithDrawMoney(amount) -> {
-      let balance = balance -. amount
-      case amount >. 0.0 && balance >. 0.0 {
-        True -> Ok([CustomerWithdrewCash(amount:, balance:)])
-        False -> Error(CantWithdrawMoreThanCurrentBalance)
-      }
-    }
     _, _ -> Error(CantOperateOnUnopenedAccount)
   }
 }
@@ -126,40 +117,81 @@ pub fn apply(bank_account: BankAccount, event: BankAccountEvent) {
 }
 ```
 
+### Snapshot Configuration
+
+```Gleam
+// Enable snapshots every 100 events
+let event_sourcing = 
+  eventsourcing.new(mem_store, [query])
+  |> eventsourcing.with_snapshots(eventsourcing.SnapshotConfig(100))
+
+// Load latest snapshot if available
+let assert Ok(maybe_snapshot) = eventsourcing.get_latest_snapshot(
+  event_sourcing,
+  "account-123"
+)
+```
+
 ### Running the Example
 
 ```gleam
 pub fn main() {
-  let mem_store =
-    memory_store.new(UnopenedBankAccount, handle, apply)
-  let query = fn(
-    aggregate_id: String,
-    events: List(eventsourcing.EventEnvelop(BankAccountEvent)),
-  ) {
+  let query = fn(aggregate_id, events) {
     io.println_error(
       "Aggregate Bank Account with ID: "
       <> aggregate_id
-      <> " commited "
+      <> " committed "
       <> events |> list.length |> int.to_string
       <> " events.",
     )
   }
-  let event_sourcing = eventsourcing.new(mem_store, [query])
-  eventsourcing.execute(
+  
+  let event_sourcing = 
+    eventsourcing.new(
+      event_store: memory_store.new(),
+      queries: [query],
+      handle: handle,
+      apply: apply,
+      empty_state: UnopenedBankAccount,
+    )
+    
+  case eventsourcing.execute(
     event_sourcing,
-    "92085b42-032c-4d7a-84de-a86d67123858",
-    OpenAccount("92085b42-032c-4d7a-84de-a86d67123858"),
-  )
+    "account-123",
+    OpenAccount("account-123"),
+  ) {
+    Ok(_) -> io.println("Account created successfully")
+    Error(error) -> io.println("Failed to create account: " <> debug(error))
+  }
 }
 ```
 
+### Error Handling
+
+The library now provides comprehensive error handling through the
+EventSourcingError type:
+
+```Gleam
+pub type EventSourcingError(domainerror) {
+  DomainError(domainerror)
+  EventStoreError(String)
+  EntityNotFound
+}
+```
+
+All operations that might fail return a Result type, making
+error handling explicit and type-safe.
+
 ## Philosophy
 
-Eventsourcing is designed to make building event-sourced systems easy and intuitive. It encourages a clear separation between command handling and event application, making your code more maintainable and testable.
+Eventsourcing is designed to make building event-sourced systems easy and intuitive.
+It encourages a clear separation between command handling and event application,
+making your code more maintainable and testable.
 
 ## Installation
 
-Eventsourcing is published on [Hex](https://hex.pm/packages/eventsourcing)! You can add it to your Gleam projects from the command line:
+Eventsourcing is published on [Hex](https://hex.pm/packages/eventsourcing)!
+You can add it to your Gleam projects from the command line:
 
 ```sh
 gleam add eventsourcing
@@ -167,7 +199,10 @@ gleam add eventsourcing
 
 ## Support
 
-Eventsourcing is built by [Renatillas](https://github.com/renatillas). Contributions are very welcome! If you've spotted a bug, or would like to suggest a feature, please open an issue or a pull request.
+Eventsourcing is built by [Renatillas](https://github.com/renatillas).
+Contributions are very welcome!
+If you've spotted a bug, or would like to suggest a feature,
+please open an issue or a pull request.
 
 ## Contributing
 
@@ -179,8 +214,10 @@ Contributions are welcome! Please follow these steps:
 4. Push to the branch (`git push origin my-feature-branch`).
 5. Open a pull request.
 
-Please ensure your code adheres to the project's coding standards and includes appropriate tests.
+Please ensure your code adheres to the project's coding standards and
+includes appropriate tests.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.
+See the [LICENSE](LICENSE) file for details.

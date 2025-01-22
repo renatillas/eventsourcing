@@ -93,7 +93,7 @@ pub type Query(event) =
 
 /// The main record of the library. 
 /// It holds everything together and serves as a reference point 
-/// for other functions such as execute, load_aggregate_entity, and load_events
+/// for other functions such as execute, load_aggregate, and load_events
 pub opaque type EventSourcing(eventstore, entity, command, event, error) {
   EventSourcing(
     event_store: EventStore(eventstore, entity, command, event, error),
@@ -280,42 +280,6 @@ pub fn execute_with_metadata(
   Ok(Nil)
 }
 
-fn load_aggregate_or_emtpy_aggregate(
-  eventsourcing: EventSourcing(eventstore, entity, command, event, error),
-  aggregate_id: AggregateId,
-) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
-  use maybe_snapshot <- result.try(eventsourcing.event_store.load_snapshot(
-    eventsourcing.event_store.eventstore,
-    aggregate_id,
-  ))
-
-  let start_from = case maybe_snapshot {
-    Some(snapshot) -> snapshot.sequence
-    None -> 0
-  }
-  use events <- result.map(eventsourcing.event_store.load_events(
-    eventsourcing.event_store.eventstore,
-    aggregate_id,
-    start_from,
-  ))
-
-  let #(starting_state, starting_sequence) = case maybe_snapshot {
-    None -> #(eventsourcing.empty_state, 0)
-    Some(snapshot) -> #(snapshot.entity, snapshot.sequence)
-  }
-
-  let #(instance, sequence) =
-    events
-    |> list.fold(
-      from: #(starting_state, starting_sequence),
-      with: fn(aggregate_and_sequence, event_envelop) {
-        let #(aggregate, sequence) = aggregate_and_sequence
-        #(eventsourcing.apply(aggregate, event_envelop.payload), sequence + 1)
-      },
-    )
-  Aggregate(aggregate_id, instance, sequence)
-}
-
 /// Loads the current state of an aggregate.
 /// 
 /// ## Arguments
@@ -442,4 +406,40 @@ pub fn get_latest_snapshot(
       )
     }
   }
+}
+
+fn load_aggregate_or_emtpy_aggregate(
+  eventsourcing: EventSourcing(eventstore, entity, command, event, error),
+  aggregate_id: AggregateId,
+) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
+  use maybe_snapshot <- result.try(eventsourcing.event_store.load_snapshot(
+    eventsourcing.event_store.eventstore,
+    aggregate_id,
+  ))
+
+  let start_from = case maybe_snapshot {
+    Some(snapshot) -> snapshot.sequence
+    None -> 0
+  }
+  use events <- result.map(eventsourcing.event_store.load_events(
+    eventsourcing.event_store.eventstore,
+    aggregate_id,
+    start_from,
+  ))
+
+  let #(starting_state, starting_sequence) = case maybe_snapshot {
+    None -> #(eventsourcing.empty_state, 0)
+    Some(snapshot) -> #(snapshot.entity, snapshot.sequence)
+  }
+
+  let #(instance, sequence) =
+    events
+    |> list.fold(
+      from: #(starting_state, starting_sequence),
+      with: fn(aggregate_and_sequence, event_envelop) {
+        let #(aggregate, sequence) = aggregate_and_sequence
+        #(eventsourcing.apply(aggregate, event_envelop.payload), sequence + 1)
+      },
+    )
+  Aggregate(aggregate_id, instance, sequence)
 }
