@@ -55,10 +55,14 @@ pub fn new() {
 
   EventStore(
     eventstore: memory_store,
-    commit: commit,
+    commit_events: commit_events,
     load_events: load_events,
     load_snapshot: load_snapshot,
     save_snapshot: save_snapshot,
+    execute_transaction: fn(f) { f(memory_store) },
+    get_latest_snapshot_transaction: fn(f) { f(memory_store) },
+    load_aggregate_transaction: fn(f) { f(memory_store) },
+    load_events_transaction: fn(f) { f(memory_store) },
   )
 }
 
@@ -77,6 +81,7 @@ fn handle_events_message(message: EventMessage(event), state: EventState(event))
 
 fn load_events(
   memory_store: MemoryStore(entity, command, event, error),
+  _,
   aggregate_id: AggregateId,
   start_from: Int,
 ) -> Result(List(EventEnvelop(event)), EventSourcingError(error)) {
@@ -100,7 +105,7 @@ fn load_events(
   })
 }
 
-fn commit(
+fn commit_events(
   memory_store: MemoryStore(entity, command, event, error),
   aggregate: Aggregate(entity, command, event, error),
   events: List(event),
@@ -108,7 +113,7 @@ fn commit(
 ) -> Result(#(List(EventEnvelop(event)), Int), EventSourcingError(error)) {
   let Aggregate(aggregate_id, _, sequence) = aggregate
   let wrapped_events = wrap_events(aggregate_id, sequence, events, metadata)
-  use past_events <- result.map(load_events(memory_store, aggregate_id, 0))
+  use past_events <- result.map(load_events(memory_store, Nil, aggregate_id, 0))
   let events = list.append(past_events, wrapped_events)
   actor.send(memory_store.events_subject, SetEvents(aggregate_id, events))
   let assert Ok(last_event) = list.last(wrapped_events)

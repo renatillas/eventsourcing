@@ -77,6 +77,8 @@ pub type EventSourcingError(domainerror) {
   DomainError(domainerror)
   EventStoreError(String)
   EntityNotFound
+  TransactionFailed
+  TransactionRolledBack
 }
 
 @internal
@@ -94,9 +96,23 @@ pub type Query(event) =
 /// The main record of the library. 
 /// It holds everything together and serves as a reference point 
 /// for other functions such as execute, load_aggregate_entity, and load_events
-pub opaque type EventSourcing(eventstore, entity, command, event, error) {
+pub opaque type EventSourcing(
+  eventstore,
+  entity,
+  command,
+  event,
+  error,
+  transaction_handle,
+) {
   EventSourcing(
-    event_store: EventStore(eventstore, entity, command, event, error),
+    event_store: EventStore(
+      eventstore,
+      entity,
+      command,
+      event,
+      error,
+      transaction_handle,
+    ),
     queries: List(Query(event)),
     handle: Handle(entity, command, event, error),
     apply: Apply(entity, event),
@@ -114,23 +130,54 @@ pub opaque type EventSourcing(eventstore, entity, command, event, error) {
 /// - `apply`: Event application function
 /// - `empty_state`: Initial state for new aggregates
 /// - `snapshot_config`: Optional configuration for snapshot creation
-pub type EventStore(eventstore, entity, command, event, error) {
+pub type EventStore(
+  eventstore,
+  entity,
+  command,
+  event,
+  error,
+  transaction_handle,
+) {
   EventStore(
-    eventstore: eventstore,
-    load_events: fn(eventstore, AggregateId, Int) ->
+    execute_transaction: fn(
+      fn(transaction_handle) -> Result(Nil, EventSourcingError(error)),
+    ) ->
+      Result(Nil, EventSourcingError(error)),
+    load_aggregate_transaction: fn(
+      fn(transaction_handle) ->
+        Result(
+          Aggregate(entity, command, event, error),
+          EventSourcingError(error),
+        ),
+    ) ->
+      Result(
+        Aggregate(entity, command, event, error),
+        EventSourcingError(error),
+      ),
+    load_events_transaction: fn(
+      fn(transaction_handle) ->
+        Result(List(EventEnvelop(event)), EventSourcingError(error)),
+    ) ->
       Result(List(EventEnvelop(event)), EventSourcingError(error)),
-    commit: fn(
-      eventstore,
+    get_latest_snapshot_transaction: fn(
+      fn(transaction_handle) ->
+        Result(Option(Snapshot(entity)), EventSourcingError(error)),
+    ) ->
+      Result(Option(Snapshot(entity)), EventSourcingError(error)),
+    commit_events: fn(
+      transaction_handle,
       Aggregate(entity, command, event, error),
       List(event),
       List(#(String, String)),
     ) ->
       Result(#(List(EventEnvelop(event)), Int), EventSourcingError(error)),
-    // New optional snapshot methods
-    save_snapshot: fn(eventstore, Snapshot(entity)) ->
-      Result(Nil, EventSourcingError(error)),
-    load_snapshot: fn(eventstore, AggregateId) ->
+    load_events: fn(eventstore, transaction_handle, AggregateId, Int) ->
+      Result(List(EventEnvelop(event)), EventSourcingError(error)),
+    load_snapshot: fn(transaction_handle, AggregateId) ->
       Result(Option(Snapshot(entity)), EventSourcingError(error)),
+    save_snapshot: fn(transaction_handle, Snapshot(entity)) ->
+      Result(Nil, EventSourcingError(error)),
+    eventstore: eventstore,
   )
 }
 
@@ -146,7 +193,14 @@ pub type EventStore(eventstore, entity, command, event, error) {
 /// ## Returns
 /// A new EventSourcing instance without snapshot support
 pub fn new(
-  event_store event_store: EventStore(eventstore, entity, command, event, error),
+  event_store event_store: EventStore(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    transaction_handle,
+  ),
   queries queries: List(Query(event)),
   handle handle: Handle(entity, command, event, error),
   apply apply: Apply(entity, event),
@@ -171,9 +225,23 @@ pub fn new(
 /// ## Returns
 /// A new EventSourcing instance with snapshot support enabled
 pub fn with_snapshots(
-  event_sourcing: EventSourcing(eventstore, entity, command, event, error),
+  event_sourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    transaction_handle,
+  ),
   config: SnapshotConfig,
-) -> EventSourcing(eventstore, entity, command, event, error) {
+) -> EventSourcing(
+  eventstore,
+  entity,
+  command,
+  event,
+  error,
+  transaction_handle,
+) {
   EventSourcing(..event_sourcing, snapshot_config: Some(config))
 }
 
@@ -187,17 +255,18 @@ pub fn with_snapshots(
 /// ## Returns
 /// Ok(Nil) if successful, or an error if command handling fails
 pub fn execute(
-  eventsourcing eventsourcing: EventSourcing(
+  event_sourcing event_sourcing: EventSourcing(
     eventstore,
     entity,
     command,
     event,
     error,
+    transaction_handle,
   ),
   aggregate_id aggregate_id: AggregateId,
   command command: command,
 ) -> Result(Nil, EventSourcingError(error)) {
-  execute_with_metadata(eventsourcing:, aggregate_id:, command:, metadata: [])
+  execute_with_metadata(event_sourcing:, aggregate_id:, command:, metadata: [])
 }
 
 /// Executes a command with additional metadata.
@@ -211,25 +280,28 @@ pub fn execute(
 /// ## Returns
 /// Ok(Nil) if successful, or an error if command handling fails
 pub fn execute_with_metadata(
-  eventsourcing eventsourcing: EventSourcing(
+  event_sourcing event_sourcing: EventSourcing(
     eventstore,
     entity,
     command,
     event,
     error,
+    transaction_handle,
   ),
   aggregate_id aggregate_id: AggregateId,
   command command: command,
   metadata metadata: List(#(String, String)),
 ) -> Result(Nil, EventSourcingError(error)) {
+  use tx <- event_sourcing.event_store.execute_transaction()
+
   use aggregate <- result.try(load_aggregate_or_emtpy_aggregate(
-    eventsourcing,
+    event_sourcing,
+    tx,
     aggregate_id,
   ))
-  let entity = aggregate.entity
 
   use events <- result.try(
-    eventsourcing.handle(entity, command)
+    event_sourcing.handle(aggregate.entity, command)
     |> result.map_error(fn(error) { DomainError(error) }),
   )
 
@@ -238,20 +310,20 @@ pub fn execute_with_metadata(
       ..aggregate,
       entity: events
         |> list.fold(aggregate.entity, fn(event, entity) {
-          eventsourcing.apply(event, entity)
+          event_sourcing.apply(event, entity)
         }),
     )
 
   use #(commited_events, sequence) <- result.try(
-    eventsourcing.event_store.commit(
-      eventsourcing.event_store.eventstore,
+    event_sourcing.event_store.commit_events(
+      tx,
       post_command_aggregate,
       events,
       metadata,
     ),
   )
 
-  case eventsourcing.snapshot_config {
+  case event_sourcing.snapshot_config {
     Some(config) -> {
       case
         sequence % config.snapshot_frequency == 0
@@ -265,10 +337,7 @@ pub fn execute_with_metadata(
               sequence: sequence,
               timestamp: birl.to_unix(birl.now()),
             )
-          eventsourcing.event_store.save_snapshot(
-            eventsourcing.event_store.eventstore,
-            snapshot,
-          )
+          event_sourcing.event_store.save_snapshot(tx, snapshot)
         }
         False -> Ok(Nil)
       }
@@ -276,23 +345,28 @@ pub fn execute_with_metadata(
     None -> Ok(Nil)
   }
   |> result.try(fn(_) {
-    eventsourcing.queries
+    event_sourcing.queries
     |> list.map(fn(query) { query(aggregate.aggregate_id, commited_events) })
     Ok(Nil)
   })
 }
 
 fn load_aggregate_or_emtpy_aggregate(
-  eventsourcing: EventSourcing(eventstore, entity, command, event, error),
+  eventsourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    transaction_handle,
+  ),
+  tx: transaction_handle,
   aggregate_id: AggregateId,
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
   use maybe_snapshot <- result.try(case eventsourcing.snapshot_config {
     None -> Ok(None)
     Some(_config) -> {
-      eventsourcing.event_store.load_snapshot(
-        eventsourcing.event_store.eventstore,
-        aggregate_id,
-      )
+      eventsourcing.event_store.load_snapshot(tx, aggregate_id)
     }
   })
 
@@ -302,6 +376,7 @@ fn load_aggregate_or_emtpy_aggregate(
   }
   use events <- result.map(eventsourcing.event_store.load_events(
     eventsourcing.event_store.eventstore,
+    tx,
     aggregate_id,
     start_from,
   ))
@@ -332,18 +407,20 @@ fn load_aggregate_or_emtpy_aggregate(
 /// ## Returns
 /// The current state of the aggregate, or an error if loading fails
 pub fn load_aggregate(
-  eventsourcing eventsourcing: EventSourcing(
+  event_sourcing event_sourcing: EventSourcing(
     eventstore,
     entity,
     command,
     event,
     error,
+    transaction_handle,
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
-  load_aggregate_or_emtpy_aggregate(eventsourcing, aggregate_id)
+  use tx <- event_sourcing.event_store.load_aggregate_transaction()
+  load_aggregate_or_emtpy_aggregate(event_sourcing, tx, aggregate_id)
   |> result.try(fn(aggregate) {
-    case aggregate.entity == eventsourcing.empty_state {
+    case aggregate.entity == event_sourcing.empty_state {
       True -> Error(EntityNotFound)
       False -> Ok(aggregate)
     }
@@ -361,6 +438,7 @@ pub fn add_query(
     command,
     event,
     error,
+    transaction_handle,
   ),
   query query,
 ) {
@@ -388,17 +466,20 @@ pub fn add_query(
 /// // events will contain all events for account-123 starting from sequence 5
 /// ```
 pub fn load_events(
-  eventsourcing eventsourcing: EventSourcing(
+  event_sourcing event_sourcing: EventSourcing(
     eventstore,
     entity,
     command,
     event,
     error,
+    transaction_handle,
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(List(EventEnvelop(event)), EventSourcingError(error)) {
-  eventsourcing.event_store.load_events(
-    eventsourcing.event_store.eventstore,
+  use tx <- event_sourcing.event_store.load_events_transaction()
+  event_sourcing.event_store.load_events(
+    event_sourcing.event_store.eventstore,
+    tx,
     aggregate_id,
     0,
   )
@@ -429,24 +510,23 @@ pub fn load_events(
 /// }
 /// ```
 pub fn get_latest_snapshot(
-  eventsourcing eventsourcing: EventSourcing(
+  event_sourcing event_sourcing: EventSourcing(
     eventstore,
     entity,
     command,
     event,
     error,
+    transaction_handle,
   ),
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(Option(Snapshot(entity)), EventSourcingError(error)) {
+  use tx <- event_sourcing.event_store.get_latest_snapshot_transaction()
   // If snapshots are not configured, return None
-  case eventsourcing.snapshot_config {
+  case event_sourcing.snapshot_config {
     None -> Ok(None)
     Some(_) -> {
       // Load snapshot from event store
-      eventsourcing.event_store.load_snapshot(
-        eventsourcing.event_store.eventstore,
-        aggregate_id,
-      )
+      event_sourcing.event_store.load_snapshot(tx, aggregate_id)
     }
   }
 }
