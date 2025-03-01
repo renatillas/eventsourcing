@@ -204,7 +204,7 @@ pub fn new(
   queries queries: List(Query(event)),
   handle handle: Handle(entity, command, event, error),
   apply apply: Apply(entity, event),
-  emtpy_state empty_state: entity,
+  empty_state empty_state: entity,
 ) {
   EventSourcing(
     event_store:,
@@ -294,7 +294,7 @@ pub fn execute_with_metadata(
 ) -> Result(Nil, EventSourcingError(error)) {
   use tx <- event_sourcing.event_store.execute_transaction()
 
-  use aggregate <- result.try(load_aggregate_or_emtpy_aggregate(
+  use aggregate <- result.try(load_aggregate_or_create_new(
     event_sourcing,
     tx,
     aggregate_id,
@@ -309,8 +309,8 @@ pub fn execute_with_metadata(
     Aggregate(
       ..aggregate,
       entity: events
-        |> list.fold(aggregate.entity, fn(event, entity) {
-          event_sourcing.apply(event, entity)
+        |> list.fold(aggregate.entity, fn(entity, event) {
+          event_sourcing.apply(entity, event)
         }),
     )
 
@@ -324,25 +324,17 @@ pub fn execute_with_metadata(
   )
 
   case event_sourcing.snapshot_config {
-    Some(config) -> {
-      case
-        sequence % config.snapshot_frequency == 0
-        && config.snapshot_frequency != 0
-      {
-        True -> {
-          let snapshot =
-            Snapshot(
-              aggregate_id: aggregate.aggregate_id,
-              entity: post_command_aggregate.entity,
-              sequence: sequence,
-              timestamp: birl.to_unix(birl.now()),
-            )
-          event_sourcing.event_store.save_snapshot(tx, snapshot)
-        }
-        False -> Ok(Nil)
-      }
+    Some(config) if sequence % config.snapshot_frequency == 0 && config.snapshot_frequency != 0 -> {
+      let snapshot =
+        Snapshot(
+          aggregate_id: aggregate.aggregate_id,
+          entity: post_command_aggregate.entity,
+          sequence: sequence,
+          timestamp: birl.to_unix(birl.now()),
+        )
+      event_sourcing.event_store.save_snapshot(tx, snapshot)
     }
-    None -> Ok(Nil)
+    _ -> Ok(Nil)
   }
   |> result.try(fn(_) {
     event_sourcing.queries
@@ -351,7 +343,7 @@ pub fn execute_with_metadata(
   })
 }
 
-fn load_aggregate_or_emtpy_aggregate(
+fn load_aggregate_or_create_new(
   eventsourcing: EventSourcing(
     eventstore,
     entity,
@@ -365,26 +357,20 @@ fn load_aggregate_or_emtpy_aggregate(
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
   use maybe_snapshot <- result.try(case eventsourcing.snapshot_config {
     None -> Ok(None)
-    Some(_config) -> {
-      eventsourcing.event_store.load_snapshot(tx, aggregate_id)
-    }
+    Some(_) -> eventsourcing.event_store.load_snapshot(tx, aggregate_id)
   })
-
-  let start_from = case maybe_snapshot {
-    Some(snapshot) -> snapshot.sequence
-    None -> 0
-  }
-  use events <- result.map(eventsourcing.event_store.load_events(
-    eventsourcing.event_store.eventstore,
-    tx,
-    aggregate_id,
-    start_from,
-  ))
 
   let #(starting_state, starting_sequence) = case maybe_snapshot {
     None -> #(eventsourcing.empty_state, 0)
     Some(snapshot) -> #(snapshot.entity, snapshot.sequence)
   }
+
+  use events <- result.map(eventsourcing.event_store.load_events(
+    eventsourcing.event_store.eventstore,
+    tx,
+    aggregate_id,
+    starting_sequence,
+  ))
 
   let #(instance, sequence) =
     events
@@ -418,7 +404,7 @@ pub fn load_aggregate(
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
   use tx <- event_sourcing.event_store.load_aggregate_transaction()
-  load_aggregate_or_emtpy_aggregate(event_sourcing, tx, aggregate_id)
+  load_aggregate_or_create_new(event_sourcing, tx, aggregate_id)
   |> result.try(fn(aggregate) {
     case aggregate.entity == event_sourcing.empty_state {
       True -> Error(EntityNotFound)
@@ -432,7 +418,7 @@ pub fn load_aggregate(
 /// Queries are functions that run when events are committed.
 /// They can be used for things like updating read models or sending notifications.
 pub fn add_query(
-  eventsouring eventsourcing: EventSourcing(
+  eventsourcing eventsourcing: EventSourcing(
     eventstore,
     entity,
     command,

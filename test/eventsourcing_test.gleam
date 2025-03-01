@@ -1,10 +1,10 @@
 import birdie
 import eventsourcing
+import eventsourcing/memory_store
 import example_bank_account
 import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
-import inmemory as memory_store
 import pprint
 
 pub fn main() {
@@ -119,7 +119,7 @@ pub fn load_events_with_metadata_test() {
   |> birdie.snap(title: "load event with metadata")
 }
 
-pub fn load_events_emtpy_aggregate_test() {
+pub fn load_events_empty_aggregate_test() {
   let event_sourcing =
     eventsourcing.new(
       memory_store.new(),
@@ -177,7 +177,7 @@ pub fn load_aggregate_test() {
   |> birdie.snap(title: "load aggregate")
 }
 
-pub fn load_emtpy_aggregate_test() {
+pub fn load_empty_aggregate_test() {
   let event_sourcing =
     eventsourcing.new(
       memory_store.new(),
@@ -194,7 +194,7 @@ pub fn load_emtpy_aggregate_test() {
   |> birdie.snap(title: "load aggregate not found raises error EntityNotFound")
 }
 
-pub fn load_emtpy_aggregate_with_snapshots_test() {
+pub fn load_empty_aggregate_with_snapshots_test() {
   let event_sourcing =
     eventsourcing.new(
       memory_store.new(),

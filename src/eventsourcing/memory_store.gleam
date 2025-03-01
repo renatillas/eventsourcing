@@ -114,8 +114,8 @@ fn commit_events(
   let Aggregate(aggregate_id, _, sequence) = aggregate
   let wrapped_events = wrap_events(aggregate_id, sequence, events, metadata)
   use past_events <- result.map(load_events(memory_store, Nil, aggregate_id, 0))
-  let events = list.append(past_events, wrapped_events)
-  actor.send(memory_store.events_subject, SetEvents(aggregate_id, events))
+  let all_events = list.append(past_events, wrapped_events)
+  actor.send(memory_store.events_subject, SetEvents(aggregate_id, all_events))
   let assert Ok(last_event) = list.last(wrapped_events)
 
   #(wrapped_events, last_event.sequence)
