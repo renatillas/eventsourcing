@@ -3,7 +3,6 @@ import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
-import gleam/otp/static_supervisor as supervisor
 import gleam/otp/supervision
 import gleam/pair
 import gleam/result
@@ -30,7 +29,7 @@ type EventState(event) =
 type SnapshotState(entity) =
   Dict(AggregateId, eventsourcing.Snapshot(entity))
 
-type EventMessage(event) {
+pub type EventMessage(event) {
   SetEvents(key: String, value: List(EventEnvelop(event)))
   GetEvents(
     key: String,
@@ -38,7 +37,7 @@ type EventMessage(event) {
   )
 }
 
-type SnapshotMessage(entity) {
+pub type SnapshotMessage(entity) {
   SetSnapshot(key: String, value: eventsourcing.Snapshot(entity))
   GetSnapshot(
     key: String,
@@ -104,7 +103,21 @@ fn supervised_snapshot_actor(snapshot_actor_receiver) {
   })
 }
 
-pub fn new_supervised(event_store_receiver) {
+pub fn supervised(
+  event_store_receiver: process.Subject(
+    eventsourcing.EventStore(
+      MemoryStore(entity, command, event, error),
+      entity,
+      command,
+      event,
+      error,
+      MemoryStore(entity, command, event, error),
+    ),
+  ),
+) -> #(
+  supervision.ChildSpecification(process.Subject(EventMessage(c))),
+  supervision.ChildSpecification(process.Subject(SnapshotMessage(a))),
+) {
   let events_actor_receiver = process.new_subject()
   let supervised_events_actor_spec =
     supervised_events_actor(events_actor_receiver)
@@ -112,13 +125,6 @@ pub fn new_supervised(event_store_receiver) {
   let snapshot_actor_receiver = process.new_subject()
   let supervised_snapshot_actor_spec =
     supervised_snapshot_actor(snapshot_actor_receiver)
-
-  // Add to supervision tree              
-  let assert Ok(sup) =
-    supervisor.new(supervisor.OneForOne)
-    |> supervisor.add(supervised_events_actor_spec)
-    |> supervisor.add(supervised_snapshot_actor_spec)
-    |> supervisor.start()
 
   let assert Ok(event_actor) = process.receive(events_actor_receiver, 1000)
   let assert Ok(snapshot_actor) = process.receive(snapshot_actor_receiver, 1000)
@@ -142,7 +148,7 @@ pub fn new_supervised(event_store_receiver) {
       load_events_transaction: fn(f) { f(memory_store) },
     ),
   )
-  sup
+  #(supervised_events_actor_spec, supervised_snapshot_actor_spec)
 }
 
 fn handle_events_message(state: EventState(event), message: EventMessage(event)) {
