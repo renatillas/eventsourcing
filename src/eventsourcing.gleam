@@ -324,7 +324,10 @@ pub fn execute_with_metadata(
   )
 
   case event_sourcing.snapshot_config {
-    Some(config) if sequence % config.snapshot_frequency == 0 && config.snapshot_frequency != 0 -> {
+    Some(config)
+      if sequence % config.snapshot_frequency == 0
+      && config.snapshot_frequency != 0
+    -> {
       let snapshot =
         Snapshot(
           aggregate_id: aggregate.aggregate_id,

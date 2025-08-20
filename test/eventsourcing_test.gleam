@@ -12,9 +12,10 @@ pub fn main() {
 }
 
 pub fn execute_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -35,9 +36,10 @@ pub fn query_test() {
     |> pprint.format
     |> birdie.snap(title: "query event")
   }
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [query],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -53,9 +55,10 @@ pub fn query_test() {
 }
 
 pub fn load_events_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -94,9 +97,10 @@ pub fn load_events_test() {
 }
 
 pub fn load_events_with_metadata_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -120,9 +124,10 @@ pub fn load_events_with_metadata_test() {
 }
 
 pub fn load_events_empty_aggregate_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -137,9 +142,10 @@ pub fn load_events_empty_aggregate_test() {
 }
 
 pub fn load_aggregate_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -178,9 +184,10 @@ pub fn load_aggregate_test() {
 }
 
 pub fn load_empty_aggregate_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -195,9 +202,10 @@ pub fn load_empty_aggregate_test() {
 }
 
 pub fn load_empty_aggregate_with_snapshots_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -231,9 +239,10 @@ pub fn load_empty_aggregate_with_snapshots_test() {
 
 // Test creating and loading a snapshot after a specific number of events
 pub fn snapshot_creation_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -281,9 +290,10 @@ pub fn snapshot_creation_test() {
 
 // Test rebuilding aggregate from snapshot and subsequent events
 pub fn rebuild_from_snapshot_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -329,9 +339,10 @@ pub fn rebuild_from_snapshot_test() {
 
 // Test snapshot frequency
 pub fn snapshot_frequency_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -395,9 +406,10 @@ pub fn snapshot_frequency_test() {
 
 // Test multiple aggregates with snapshots
 pub fn multiple_aggregates_snapshot_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -472,9 +484,10 @@ pub fn multiple_aggregates_snapshot_test() {
 
 // Test disabling snapshots
 pub fn disable_snapshots_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -505,9 +518,10 @@ pub fn disable_snapshots_test() {
 }
 
 pub fn handle_invalid_command_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -527,9 +541,10 @@ pub fn handle_invalid_command_test() {
 }
 
 pub fn invalid_deposit_amount_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -555,9 +570,10 @@ pub fn invalid_deposit_amount_test() {
 }
 
 pub fn zero_snapshot_interval_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -590,9 +606,10 @@ pub fn zero_snapshot_interval_test() {
 
 // Test snapshot behavior with large intervals
 pub fn large_snapshot_interval_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -625,9 +642,10 @@ pub fn large_snapshot_interval_test() {
 
 // Test snapshot with empty events list
 pub fn snapshot_empty_events_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -650,9 +668,10 @@ pub fn snapshot_empty_events_test() {
 
 // Test snapshot recovery after failures
 pub fn snapshot_recovery_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
@@ -719,9 +738,10 @@ pub fn snapshot_recovery_test() {
 
 // Test concurrent snapshot operations
 pub fn concurrent_snapshot_test() {
+  let assert Ok(store) = memory_store.new()
   let event_sourcing =
     eventsourcing.new(
-      memory_store.new(),
+      store,
       [],
       example_bank_account.handle,
       example_bank_account.apply,
