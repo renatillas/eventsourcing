@@ -3,12 +3,13 @@ import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/pair
 import gleam/result
 
 import eventsourcing.{
   type Aggregate, type AggregateId, type EventEnvelop, type EventSourcingError,
-  Aggregate, EventStore, EventStoreError, MemoryStoreEventEnvelop,
+  Aggregate, EventStore, MemoryStoreEventEnvelop,
 }
 
 const load_commited_events_time = 1000
@@ -28,51 +29,135 @@ type EventState(event) =
 type SnapshotState(entity) =
   Dict(AggregateId, eventsourcing.Snapshot(entity))
 
-type EventMessage(event) {
+pub type EventMessage(event) {
   SetEvents(key: String, value: List(EventEnvelop(event)))
   GetEvents(
     key: String,
-    response: process.Subject(Result(List(EventEnvelop(event)), Nil)),
+    response: process.Subject(Option(List(EventEnvelop(event)))),
   )
 }
 
-type SnapshotMessage(entity) {
+pub type SnapshotMessage(entity) {
   SetSnapshot(key: String, value: eventsourcing.Snapshot(entity))
   GetSnapshot(
     key: String,
-    response: process.Subject(Result(eventsourcing.Snapshot(entity), Nil)),
+    response: process.Subject(Option(eventsourcing.Snapshot(entity))),
   )
 }
 
 /// Create a new memory store record.
 pub fn new() {
-  let assert Ok(event_actor) = actor.start(dict.new(), handle_events_message)
-  let assert Ok(snapshot_actor) =
-    actor.start(dict.new(), handle_snapshot_message)
+  use event_actor <- result.try(
+    actor.new(dict.new())
+    |> actor.on_message(handle_events_message)
+    |> actor.start(),
+  )
+  use snapshot_actor <- result.try(
+    actor.new(dict.new())
+    |> actor.on_message(handle_snapshot_message)
+    |> actor.start(),
+  )
 
   let memory_store =
-    MemoryStore(events_subject: event_actor, snapshot_subject: snapshot_actor)
+    MemoryStore(
+      events_subject: event_actor.data,
+      snapshot_subject: snapshot_actor.data,
+    )
 
-  EventStore(
-    eventstore: memory_store,
-    commit_events: commit_events,
-    load_events: load_events,
-    load_snapshot: load_snapshot,
-    save_snapshot: save_snapshot,
-    execute_transaction: fn(f) { f(memory_store) },
-    get_latest_snapshot_transaction: fn(f) { f(memory_store) },
-    load_aggregate_transaction: fn(f) { f(memory_store) },
-    load_events_transaction: fn(f) { f(memory_store) },
+  Ok(
+    EventStore(
+      eventstore: memory_store,
+      commit_events: commit_events,
+      load_events: load_events,
+      load_snapshot: load_snapshot,
+      save_snapshot: save_snapshot,
+      execute_transaction: fn(f) { f(memory_store) },
+      get_latest_snapshot_transaction: fn(f) { f(memory_store) },
+      load_aggregate_transaction: fn(f) { f(memory_store) },
+      load_events_transaction: fn(f) { f(memory_store) },
+    ),
   )
 }
 
-fn handle_events_message(message: EventMessage(event), state: EventState(event)) {
+fn supervised_events_actor(events_actor_receiver) {
+  supervision.worker(fn() {
+    use started <- result.try(
+      actor.new(dict.new())
+      |> actor.on_message(handle_events_message)
+      |> actor.start(),
+    )
+    process.send(events_actor_receiver, started)
+    Ok(started)
+  })
+}
+
+fn supervised_snapshot_actor(snapshot_actor_receiver) {
+  supervision.worker(fn() {
+    use started <- result.try(
+      actor.new(dict.new())
+      |> actor.on_message(handle_snapshot_message)
+      |> actor.start(),
+    )
+    process.send(snapshot_actor_receiver, started)
+    Ok(started)
+  })
+}
+
+pub fn supervised(
+  event_store_receiver: process.Subject(
+    eventsourcing.EventStore(
+      MemoryStore(entity, command, event, error),
+      entity,
+      command,
+      event,
+      error,
+      MemoryStore(entity, command, event, error),
+    ),
+  ),
+) -> #(
+  supervision.ChildSpecification(process.Subject(EventMessage(event))),
+  supervision.ChildSpecification(process.Subject(SnapshotMessage(entity))),
+) {
+  let events_actor_receiver = process.new_subject()
+  let supervised_events_actor_spec =
+    supervised_events_actor(events_actor_receiver)
+
+  let snapshot_actor_receiver = process.new_subject()
+  let supervised_snapshot_actor_spec =
+    supervised_snapshot_actor(snapshot_actor_receiver)
+
+  let assert Ok(event_actor) = process.receive(events_actor_receiver, 1000)
+  let assert Ok(snapshot_actor) = process.receive(snapshot_actor_receiver, 1000)
+  let memory_store =
+    MemoryStore(
+      events_subject: event_actor.data,
+      snapshot_subject: snapshot_actor.data,
+    )
+
+  process.send(
+    event_store_receiver,
+    EventStore(
+      eventstore: memory_store,
+      commit_events: commit_events,
+      load_events: load_events,
+      load_snapshot: load_snapshot,
+      save_snapshot: save_snapshot,
+      execute_transaction: fn(f) { f(memory_store) },
+      get_latest_snapshot_transaction: fn(f) { f(memory_store) },
+      load_aggregate_transaction: fn(f) { f(memory_store) },
+      load_events_transaction: fn(f) { f(memory_store) },
+    ),
+  )
+  #(supervised_events_actor_spec, supervised_snapshot_actor_spec)
+}
+
+fn handle_events_message(state: EventState(event), message: EventMessage(event)) {
   case message {
     SetEvents(key, value) -> {
       state |> dict.insert(key, value) |> actor.continue
     }
     GetEvents(key, response) -> {
-      let value = state |> dict.get(key)
+      let value = state |> dict.get(key) |> option.from_result()
       actor.send(response, value)
       actor.continue(state)
     }
@@ -85,24 +170,16 @@ fn load_events(
   aggregate_id: AggregateId,
   start_from: Int,
 ) -> Result(List(EventEnvelop(event)), EventSourcingError(error)) {
-  process.try_call(
-    memory_store.events_subject,
-    GetEvents(aggregate_id, _),
-    load_commited_events_time,
-  )
-  |> result.map_error(fn(error) {
-    case error {
-      process.CallTimeout -> EventStoreError("timeout")
-      process.CalleeDown(_) ->
-        EventStoreError("process responsible of getting events is down")
-    }
-  })
-  |> result.try(fn(result) {
-    case result {
-      Ok(events) -> Ok(events |> list.drop(start_from))
-      Error(Nil) -> Ok([])
-    }
-  })
+  let events =
+    process.call(
+      memory_store.events_subject,
+      load_commited_events_time,
+      GetEvents(aggregate_id, _),
+    )
+  case events {
+    Some(events) -> Ok(events |> list.drop(start_from))
+    None -> Ok([])
+  }
 }
 
 fn commit_events(
@@ -147,15 +224,15 @@ fn wrap_events(
 }
 
 fn handle_snapshot_message(
-  message: SnapshotMessage(entity),
   state: SnapshotState(entity),
+  message: SnapshotMessage(entity),
 ) {
   case message {
     SetSnapshot(key, value) -> {
       state |> dict.insert(key, value) |> actor.continue
     }
     GetSnapshot(key, response) -> {
-      let value = state |> dict.get(key)
+      let value = state |> dict.get(key) |> option.from_result()
       actor.send(response, value)
       actor.continue(state)
     }
@@ -180,24 +257,10 @@ fn load_snapshot(
   Option(eventsourcing.Snapshot(entity)),
   eventsourcing.EventSourcingError(error),
 ) {
-  process.try_call(
-    memory_store.snapshot_subject,
-    GetSnapshot(aggregate_id, _),
-    load_snapshot_time,
+  Ok(
+    process.call(memory_store.snapshot_subject, load_snapshot_time, GetSnapshot(
+      aggregate_id,
+      _,
+    )),
   )
-  |> result.map_error(fn(error) {
-    case error {
-      process.CallTimeout -> eventsourcing.EventStoreError("timeout")
-      process.CalleeDown(_) ->
-        eventsourcing.EventStoreError(
-          "process responsible for getting snapshots is down",
-        )
-    }
-  })
-  |> result.try(fn(result) {
-    case result {
-      Ok(snapshot) -> Ok(Some(snapshot))
-      Error(Nil) -> Ok(None)
-    }
-  })
 }
