@@ -115,8 +115,8 @@ pub fn supervised(
     ),
   ),
 ) -> #(
-  supervision.ChildSpecification(process.Subject(EventMessage(c))),
-  supervision.ChildSpecification(process.Subject(SnapshotMessage(a))),
+  supervision.ChildSpecification(process.Subject(EventMessage(event))),
+  supervision.ChildSpecification(process.Subject(SnapshotMessage(entity))),
 ) {
   let events_actor_receiver = process.new_subject()
   let supervised_events_actor_spec =
