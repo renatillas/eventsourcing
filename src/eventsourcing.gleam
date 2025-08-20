@@ -1,7 +1,7 @@
-import birl
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/time/timestamp
 
 /// Type representing an aggregate's unique identifier.
 /// This is used to identify different aggregates in the event sourcing system.
@@ -333,7 +333,9 @@ pub fn execute_with_metadata(
           aggregate_id: aggregate.aggregate_id,
           entity: post_command_aggregate.entity,
           sequence: sequence,
-          timestamp: birl.to_unix(birl.now()),
+          timestamp: timestamp.to_unix_seconds_and_nanoseconds(
+            timestamp.system_time(),
+          ).0,
         )
       event_sourcing.event_store.save_snapshot(tx, snapshot)
     }
