@@ -3,6 +3,7 @@ import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import gleam/pair
 import gleam/result
@@ -81,25 +82,25 @@ pub fn new() {
 
 fn supervised_events_actor(events_actor_receiver) {
   supervision.worker(fn() {
-    use started <- result.try(
+    use started <- result.map(
       actor.new(dict.new())
       |> actor.on_message(handle_events_message)
       |> actor.start(),
     )
     process.send(events_actor_receiver, started)
-    Ok(started)
+    started
   })
 }
 
 fn supervised_snapshot_actor(snapshot_actor_receiver) {
   supervision.worker(fn() {
-    use started <- result.try(
+    use started <- result.map(
       actor.new(dict.new())
       |> actor.on_message(handle_snapshot_message)
       |> actor.start(),
     )
     process.send(snapshot_actor_receiver, started)
-    Ok(started)
+    started
   })
 }
 
@@ -114,10 +115,8 @@ pub fn supervised(
       MemoryStore(entity, command, event, error),
     ),
   ),
-) -> #(
-  supervision.ChildSpecification(process.Subject(EventMessage(event))),
-  supervision.ChildSpecification(process.Subject(SnapshotMessage(entity))),
-) {
+  strategy: static_supervisor.Strategy,
+) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
   let events_actor_receiver = process.new_subject()
   let supervised_events_actor_spec =
     supervised_events_actor(events_actor_receiver)
@@ -148,7 +147,11 @@ pub fn supervised(
       load_events_transaction: fn(f) { f(memory_store) },
     ),
   )
-  #(supervised_events_actor_spec, supervised_snapshot_actor_spec)
+
+  static_supervisor.new(strategy)
+  |> static_supervisor.add(supervised_events_actor_spec)
+  |> static_supervisor.add(supervised_snapshot_actor_spec)
+  |> static_supervisor.supervised()
 }
 
 fn handle_events_message(state: EventState(event), message: EventMessage(event)) {

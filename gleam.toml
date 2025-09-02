@@ -1,5 +1,5 @@
 name = "eventsourcing"
-version = "7.0.0"
+version = "8.0.0"
 
 # Fill out these fields if you intend to generate HTML documentation or publish
 # your project to the Hex package manager.
@@ -17,5 +17,4 @@ gleam_time = ">= 1.4.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.2.0 and < 2.0.0"
-birdie = ">= 1.2.5 and < 2.0.0"
-pprint = ">= 1.0.4 and < 2.0.0"
+asset = ">= 1.2.0 and < 2.0.0"

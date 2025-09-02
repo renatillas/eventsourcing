@@ -20,3 +20,4 @@
 - Apply functions should be pure and only update state based on events.
 - Use snapshots for optimizing aggregate rebuilding after many events.
 - Separate command handling from event application concerns.
+- Always test your implementations before finishing

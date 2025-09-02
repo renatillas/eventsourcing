@@ -26,12 +26,13 @@
 ## Table of contents
 
 - [Introduction](#introduction)
+- [Actor Architecture](#actor-architecture)
 - [Features](#features)
 - [Example](#example)
   - [Command Handling](#command-handling)
   - [Event Application](#event-application)
   - [Snapshot Configuration](#snapshot-configuration)
-  - [Running the Example](#running-the-example)
+  - [Usage](#usage)
 - [Philosophy](#philosophy)
 - [Installation](#installation)
 - [Support](#support)
@@ -40,19 +41,33 @@
 
 ## Introduction
 
-Eventsourcing is a Gleam library designed to help developers build event-sourced systems. Event sourcing is a pattern where changes to the application's state are stored as a sequence of events. This library provides a simple, type-safe way to implement event sourcing in your Gleam applications.
+Eventsourcing is a Gleam library designed to help developers build robust, concurrent event-sourced systems using OTP actors. Event sourcing is a pattern where changes to the application's state are stored as a sequence of events. This library provides a type-safe way to implement event sourcing in your Gleam applications with built-in concurrency, fault tolerance, and query processing capabilities.
+
+**The library focuses on core event sourcing functionality** with automatic query actor spawning and snapshot support for optimal performance.
+
+## Actor Architecture
+
+The library is built on an OTP actor architecture:
+
+- **Query Actors**: Event processing queries execute in separate actor processes for non-blocking, parallel processing  
+- **Fault Tolerance**: Actor crashes are isolated and don't affect the overall system
+- **Automatic Lifecycle**: Query actors are spawned automatically when creating the EventSourcing instance
 
 ## Features
 
-- **Event Sourcing**: Build systems based on the event sourcing pattern.
+- **Actor-Based Query Processing**: Event processing queries execute in separate actor processes for maximum concurrency
+- **Automatic Query Actor Management**: Query actors are spawned automatically with proper lifecycle management
+- **Fault Tolerance**: Actor crashes are isolated and don't cascade through the system
 - **Event Stores**: Supports multiple event store implementations:
   - [In-memory Store](https://github.com/renatillas/eventsourcing_inmemory): Simple in-memory event store for development and testing.
   - [Postgres Store](https://github.com/renatillas/eventsourcing_postgres): Event store implementation using PostgreSQL.
   - [SQLite Store](https://github.com/renatillas/eventsourcing_sqlite): Event store implementation using SQLite.
-- **Command Handling**: Handle commands and produce events with robust error handling.
-- **Event Application**: Apply events to update aggregates.
-- **Snapshotting**: Optimize aggregate rebuilding with configurable snapshots.
-- **Type-safe Error Handling**: Comprehensive error types and Result-based API.
+- **Command Handling**: Handle commands and produce events with robust error handling via actors
+- **Event Application**: Apply events to update aggregates within actor processes
+- **Snapshotting**: Optimize aggregate rebuilding with configurable snapshots
+- **Registry Management**: Built-in aggregate actor registry for efficient actor lifecycle management
+- **Monitoring & Telemetry**: Real-time system metrics and aggregate performance monitoring
+- **Type-safe Error Handling**: Comprehensive error types and Result-based API
 
 ## Example
 
@@ -132,9 +147,12 @@ let assert Ok(maybe_snapshot) = eventsourcing.get_latest_snapshot(
 )
 ```
 
-### Running the Example
+### Usage
 
 ```gleam
+import eventsourcing
+import eventsourcing/memory_store
+
 pub fn main() {
   let query = fn(aggregate_id, events) {
     io.println_error(
@@ -146,25 +164,40 @@ pub fn main() {
     )
   }
   
+  // Create the event sourcing system with query actors
+  let assert Ok(store) = memory_store.new()
   let event_sourcing = 
     eventsourcing.new(
-      event_store: memory_store.new(),
-      queries: [query],
+      event_store: store,
+      queries: [query],  // Automatically spawns query actors
       handle: handle,
       apply: apply,
       empty_state: UnopenedBankAccount,
     )
     
+  // Execute commands
   case eventsourcing.execute(
     event_sourcing,
     "account-123",
     OpenAccount("account-123"),
+    timeout_ms: 5000,
   ) {
-    Ok(_) -> io.println("Account created successfully")
-    Error(error) -> io.println("Failed to create account: " <> debug(error))
+    Ok(updated_eventsourcing) -> {
+      io.println("Account created successfully")
+    }
+    Error(eventsourcing.DomainError(domain_error)) -> {
+      io.println("Domain validation failed: " <> debug(domain_error))
+    }
+    Error(eventsourcing.EventStoreError(msg)) -> {
+      io.println("EventStore error: " <> msg)
+    }
+    Error(eventsourcing.EntityNotFound) -> {
+      io.println("Aggregate not found")
+    }
   }
 }
 ```
+
 
 ### Error Handling
 
@@ -182,11 +215,18 @@ pub type EventSourcingError(domainerror) {
 All operations that might fail return a Result type, making
 error handling explicit and type-safe.
 
+
 ## Philosophy
 
-Eventsourcing is designed to make building event-sourced systems easy and intuitive.
-It encourages a clear separation between command handling and event application,
-making your code more maintainable and testable.
+Eventsourcing embraces the actor model and OTP principles to build robust, concurrent event-sourced systems. The library encourages:
+
+- **Clear Separation**: Command handling, event application, and query processing are distinct concerns
+- **Concurrent Query Processing**: Queries run in separate actor processes for non-blocking event processing
+- **Fault Isolation**: Query actor crashes don't affect command processing or other queries
+- **Simplicity**: Focused on core event sourcing functionality without unnecessary complexity
+- **Type Safety**: Full Gleam type safety throughout the event sourcing pipeline
+
+This design makes your event-sourced systems naturally concurrent and fault-tolerant while maintaining simplicity and type safety.
 
 ## Installation
 

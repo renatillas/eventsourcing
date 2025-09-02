@@ -19,6 +19,7 @@ pub type BankAccountEvent {
   AccountOpened(account_id: String)
   CustomerDepositedCash(amount: Float, balance: Float)
   CustomerWithdrewCash(amount: Float, balance: Float)
+  AccountClosed
 }
 
 pub const bank_account_event_type = "BankAccountEvent"
@@ -69,6 +70,10 @@ pub fn event_encoder(event: BankAccountEvent) -> String {
       json.object([
         #("event-type", json.string("account-opened")),
         #("account-id", json.string(account_id)),
+      ])
+    AccountClosed ->
+      json.object([
+        #("event-type", json.string("account-closed")),
       ])
     CustomerDepositedCash(amount, balance) ->
       json.object([

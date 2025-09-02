@@ -1,54 +1,41 @@
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
+import gleam/string
 import gleam/time/timestamp
 
-/// Type representing an aggregate's unique identifier.
-/// This is used to identify different aggregates in the event sourcing system.
+pub opaque type Timeout {
+  Timeout(milliseconds: Int)
+}
+
+pub opaque type Frequency {
+  Frequency(n: Int)
+}
+
 pub type AggregateId =
   String
 
-/// Represents the current state of an aggregate in the event sourcing system.
-/// 
-/// ## Fields
-/// - `aggregate_id`: Unique identifier for the aggregate
-/// - `entity`: The current state of the entity
-/// - `sequence`: The current sequence number of the aggregate
 pub type Aggregate(entity, command, event, error) {
   Aggregate(aggregate_id: AggregateId, entity: entity, sequence: Int)
 }
 
-/// Represents a snapshot of an aggregate's state at a specific point in time.
-/// Snapshots are used to optimize aggregate rebuilding by providing a starting point.
-/// 
-/// ## Fields
-/// - `aggregate_id`: The aggregate this snapshot belongs to
-/// - `entity`: The state of the entity at the time of snapshot
-/// - `sequence`: The sequence number at which this snapshot was taken
-/// - `timestamp`: Unix timestamp when the snapshot was created
 pub type Snapshot(entity) {
   Snapshot(
     aggregate_id: AggregateId,
     entity: entity,
     sequence: Int,
-    timestamp: Int,
+    timestamp: timestamp.Timestamp,
   )
 }
 
-/// Configuration for snapshot creation behavior.
-/// 
-/// ## Fields
-/// - `snapshot_frequency`: Number of events after which a new snapshot should be created
 pub type SnapshotConfig {
-  SnapshotConfig(snapshot_frequency: Int)
+  SnapshotConfig(snapshot_frequency: Frequency)
 }
 
-/// Wrapper around domain events that includes metadata and sequencing information.
-/// Used by Event Stores to persist and retrieve events.
-/// 
-/// ## Variants
-/// - `MemoryStoreEventEnvelop`: Used for in-memory event storage
-/// - `SerializedEventEnvelop`: Used for persistent storage with serialization support
 pub type EventEnvelop(event) {
   MemoryStoreEventEnvelop(
     aggregate_id: AggregateId,
@@ -67,15 +54,10 @@ pub type EventEnvelop(event) {
   )
 }
 
-/// Represents errors that can occur in the event sourcing system.
-/// 
-/// ## Variants
-/// - `DomainError`: Domain-specific errors from command handling
-/// - `EventStoreError`: Errors related to event storage operations
-/// - `EntityNotFound`: When attempting to load a non-existent aggregate
 pub type EventSourcingError(domainerror) {
   DomainError(domainerror)
   EventStoreError(String)
+  NonPositiveArgument
   EntityNotFound
   TransactionFailed
   TransactionRolledBack
@@ -93,9 +75,63 @@ pub type Handle(entity, command, event, error) =
 pub type Query(event) =
   fn(AggregateId, List(EventEnvelop(event))) -> Nil
 
-/// The main record of the library. 
-/// It holds everything together and serves as a reference point 
-/// for other functions such as execute, load_aggregate_entity, and load_events
+pub type QueryActor(event) {
+  QueryActor(
+    actor: actor.Started(process.Subject(QueryMessage(event))),
+    query: Query(event),
+  )
+}
+
+pub type QueryMessage(event) {
+  ProcessEvents(aggregate_id: AggregateId, events: List(EventEnvelop(event)))
+}
+
+pub type AggregateMessage(entity, command, event, error) {
+  ExecuteCommand(
+    aggregate_id: AggregateId,
+    command: command,
+    metadata: List(#(String, String)),
+  )
+  RegisterQueryActor(QueryActor(event))
+}
+
+pub type ManagerMessage(entity, command, event, error) {
+  QueryActorStarted(QueryActor(event))
+  GetEventSourcingActor(
+    reply_to: process.Subject(
+      process.Subject(AggregateMessage(entity, command, event, error)),
+    ),
+  )
+}
+
+pub type ManagerState(
+  eventstore,
+  entity,
+  command,
+  event,
+  error,
+  transaction_handle,
+) {
+  ManagerState(
+    eventsourcing_actor: Option(
+      process.Subject(AggregateMessage(entity, command, event, error)),
+    ),
+    expected_queries: Int,
+    registered_queries: Int,
+    eventstore: EventStore(
+      eventstore,
+      entity,
+      command,
+      event,
+      error,
+      transaction_handle,
+    ),
+    handle: Handle(entity, command, event, error),
+    apply: Apply(entity, event),
+    empty_state: entity,
+  )
+}
+
 pub opaque type EventSourcing(
   eventstore,
   entity,
@@ -113,7 +149,7 @@ pub opaque type EventSourcing(
       error,
       transaction_handle,
     ),
-    queries: List(Query(event)),
+    query_actors: List(QueryActor(event)),
     handle: Handle(entity, command, event, error),
     apply: Apply(entity, event),
     empty_state: entity,
@@ -121,15 +157,6 @@ pub opaque type EventSourcing(
   )
 }
 
-/// The main type of the event sourcing system that coordinates all operations.
-/// 
-/// ## Fields
-/// - `event_store`: The storage implementation for events and snapshots
-/// - `queries`: List of query handlers to process events
-/// - `handle`: Command handler function
-/// - `apply`: Event application function
-/// - `empty_state`: Initial state for new aggregates
-/// - `snapshot_config`: Optional configuration for snapshot creation
 pub type EventStore(
   eventstore,
   entity,
@@ -181,19 +208,97 @@ pub type EventStore(
   )
 }
 
-/// Creates a new EventSourcing instance with the provided configuration.
-/// 
-/// ## Arguments
-/// - `event_store`: The storage implementation to use
-/// - `queries`: List of query handlers to process events
-/// - `handle`: Function to handle commands
-/// - `apply`: Function to apply events
-/// - `empty_state`: Initial state for new aggregates
-/// 
-/// ## Returns
-/// A new EventSourcing instance without snapshot support
+pub type AggregateActorState(
+  eventstore,
+  entity,
+  command,
+  event,
+  error,
+  transaction_handle,
+) {
+  AggregateActorState(
+    aggregate: Aggregate(entity, command, event, error),
+    eventsourcing: EventSourcing(
+      eventstore,
+      entity,
+      command,
+      event,
+      error,
+      transaction_handle,
+    ),
+  )
+}
+
+pub fn supervised(
+  eventstore eventstore: EventStore(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    transaction_handle,
+  ),
+  handle handle: Handle(entity, command, event, error),
+  apply apply: Apply(entity, event),
+  empty_state empty_state: entity,
+  queries queries: List(Query(event)),
+  eventsourcing_actor_receiver eventsourcing_actor_receiver: process.Subject(
+    actor.Started(
+      process.Subject(AggregateMessage(entity, command, event, error)),
+    ),
+  ),
+  query_actors_receiver query_actors_receiver: process.Subject(
+    QueryActor(event),
+  ),
+) -> Result(supervision.ChildSpecification(static_supervisor.Supervisor), Nil) {
+  // Create a single coordinator that manages everything properly under supervision
+  let queries_child_specs =
+    list.map(queries, fn(query) {
+      supervision.worker(fn() {
+        use query_actor <- result.try(start_query(query))
+        process.send(query_actors_receiver, query_actor)
+        Ok(query_actor.actor)
+      })
+    })
+  let eventsourcing_spec =
+    supervision.worker(fn() {
+      use eventsourcing_actor <- result.try(start(
+        eventstore: eventstore,
+        handle: handle,
+        query_actors: [],
+        apply: apply,
+        empty_state: empty_state,
+      ))
+      process.send(eventsourcing_actor_receiver, eventsourcing_actor)
+      Ok(eventsourcing_actor)
+    })
+
+  let supervisor =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(eventsourcing_spec)
+    |> list.fold(queries_child_specs, _, fn(supervisor, spec) {
+      static_supervisor.add(supervisor, spec)
+    })
+    |> static_supervisor.supervised()
+    |> Ok
+
+  supervisor
+}
+
+pub fn register_queries(
+  eventsourcing_actor: process.Subject(
+    AggregateMessage(entity, command, event, error),
+  ),
+  query_actors: List(QueryActor(event)),
+) -> Nil {
+  query_actors
+  |> list.each(fn(query_actor) {
+    process.send(eventsourcing_actor, RegisterQueryActor(query_actor))
+  })
+}
+
 pub fn new(
-  event_store event_store: EventStore(
+  eventstore eventstore: EventStore(
     eventstore,
     entity,
     command,
@@ -205,25 +310,160 @@ pub fn new(
   handle handle: Handle(entity, command, event, error),
   apply apply: Apply(entity, event),
   empty_state empty_state: entity,
+) -> Result(
+  EventSourcing(eventstore, entity, command, event, error, transaction_handle),
+  actor.StartError,
 ) {
-  EventSourcing(
-    event_store:,
-    queries:,
-    handle:,
-    apply:,
-    empty_state:,
+  use query_actors <- result.try(
+    queries
+    |> list.map(start_query)
+    |> result.all,
+  )
+
+  Ok(EventSourcing(
+    event_store: eventstore,
+    query_actors: query_actors,
+    handle: handle,
+    apply: apply,
+    empty_state: empty_state,
     snapshot_config: None,
+  ))
+}
+
+pub fn execute(
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
+  ),
+  aggregate_id: AggregateId,
+  command: command,
+) -> Nil {
+  process.send(
+    eventsourcing_actor.data,
+    ExecuteCommand(aggregate_id, command, []),
   )
 }
 
-// Enables snapshot support for an EventSourcing instance.
-/// 
-/// ## Arguments
-/// - `event_sourcing`: The EventSourcing instance to modify
-/// - `config`: Snapshot configuration specifying creation frequency
-/// 
-/// ## Returns
-/// A new EventSourcing instance with snapshot support enabled
+fn start(
+  eventstore eventstore: EventStore(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    transaction_handle,
+  ),
+  handle handle: Handle(entity, command, event, error),
+  query_actors query_actors: List(QueryActor(event)),
+  apply apply: Apply(entity, event),
+  empty_state empty_state: entity,
+) -> actor.StartResult(
+  process.Subject(AggregateMessage(entity, command, event, error)),
+) {
+  actor.new(EventSourcing(
+    event_store: eventstore,
+    query_actors: query_actors,
+    handle: handle,
+    apply: apply,
+    empty_state: empty_state,
+    snapshot_config: None,
+  ))
+  |> actor.on_message(on_message)
+  |> actor.start()
+}
+
+fn on_message(
+  state: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    transaction_handle,
+  ),
+  message: AggregateMessage(entity, command, event, error),
+) -> actor.Next(
+  EventSourcing(eventstore, entity, command, event, error, transaction_handle),
+  AggregateMessage(entity, command, event, error),
+) {
+  case message {
+    RegisterQueryActor(query_actor) -> {
+      let new_state =
+        EventSourcing(..state, query_actors: [query_actor, ..state.query_actors])
+      actor.continue(new_state)
+    }
+    ExecuteCommand(aggregate_id, command, metadata) -> {
+      let result = {
+        use tx <- state.event_store.execute_transaction()
+        use aggregate <- result.try(load_aggregate_or_create_new(
+          state,
+          tx,
+          aggregate_id,
+        ))
+
+        use events <- result.try(
+          state.handle(aggregate.entity, command)
+          |> result.map_error(fn(error) { DomainError(error) }),
+        )
+
+        let aggregate =
+          Aggregate(
+            ..aggregate,
+            entity: events
+              |> list.fold(aggregate.entity, fn(entity, event) {
+                state.apply(entity, event)
+              }),
+          )
+
+        use #(commited_events, sequence) <- result.try(
+          state.event_store.commit_events(tx, aggregate, events, metadata),
+        )
+
+        use _ <- result.try(case state.snapshot_config {
+          Some(config) if sequence % config.snapshot_frequency.n == 0 -> {
+            let snapshot =
+              Snapshot(
+                aggregate_id: aggregate.aggregate_id,
+                entity: aggregate.entity,
+                sequence: sequence,
+                timestamp: timestamp.system_time(),
+              )
+            state.event_store.save_snapshot(tx, snapshot)
+          }
+          _ -> Ok(Nil)
+        })
+
+        state.query_actors
+        |> list.each(fn(query) {
+          process.send(
+            query.actor.data,
+            ProcessEvents(aggregate_id, commited_events),
+          )
+        })
+        Ok(Nil)
+      }
+
+      case result {
+        Ok(_) -> actor.continue(state)
+        Error(DomainError(_)) -> actor.continue(state)
+        Error(error) -> {
+          actor.stop_abnormal(describe_error(error))
+        }
+      }
+    }
+  }
+}
+
+fn describe_error(error: EventSourcingError(_)) -> String {
+  case error {
+    DomainError(domainerror) -> "Domain error: " <> string.inspect(domainerror)
+    EventStoreError(msg) -> "Event store error: " <> msg
+    NonPositiveArgument -> "Non-positive argument"
+    EntityNotFound -> "Entity not found"
+    TransactionFailed -> "Transaction failed"
+    TransactionRolledBack -> "Transaction rolled back"
+  }
+}
+
 pub fn with_snapshots(
   event_sourcing: EventSourcing(
     eventstore,
@@ -234,118 +474,14 @@ pub fn with_snapshots(
     transaction_handle,
   ),
   config: SnapshotConfig,
-) -> EventSourcing(
-  eventstore,
-  entity,
-  command,
-  event,
-  error,
-  transaction_handle,
+) -> Result(
+  EventSourcing(eventstore, entity, command, event, error, transaction_handle),
+  String,
 ) {
-  EventSourcing(..event_sourcing, snapshot_config: Some(config))
-}
-
-/// Executes a command against an aggregate.
-/// 
-/// ## Arguments
-/// - `event_sourcing`: The EventSourcing instance
-/// - `aggregate_id`: ID of the aggregate to execute command against
-/// - `command`: The command to execute
-/// 
-/// ## Returns
-/// Ok(Nil) if successful, or an error if command handling fails
-pub fn execute(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
-  ),
-  aggregate_id aggregate_id: AggregateId,
-  command command: command,
-) -> Result(Nil, EventSourcingError(error)) {
-  execute_with_metadata(event_sourcing:, aggregate_id:, command:, metadata: [])
-}
-
-/// Executes a command with additional metadata.
-/// 
-/// ## Arguments
-/// - `event_sourcing`: The EventSourcing instance
-/// - `aggregate_id`: ID of the aggregate to execute command against
-/// - `command`: The command to execute
-/// - `metadata`: Additional metadata to store with generated events
-/// 
-/// ## Returns
-/// Ok(Nil) if successful, or an error if command handling fails
-pub fn execute_with_metadata(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
-  ),
-  aggregate_id aggregate_id: AggregateId,
-  command command: command,
-  metadata metadata: List(#(String, String)),
-) -> Result(Nil, EventSourcingError(error)) {
-  use tx <- event_sourcing.event_store.execute_transaction()
-
-  use aggregate <- result.try(load_aggregate_or_create_new(
-    event_sourcing,
-    tx,
-    aggregate_id,
-  ))
-
-  use events <- result.try(
-    event_sourcing.handle(aggregate.entity, command)
-    |> result.map_error(fn(error) { DomainError(error) }),
-  )
-
-  let post_command_aggregate =
-    Aggregate(
-      ..aggregate,
-      entity: events
-        |> list.fold(aggregate.entity, fn(entity, event) {
-          event_sourcing.apply(entity, event)
-        }),
-    )
-
-  use #(commited_events, sequence) <- result.try(
-    event_sourcing.event_store.commit_events(
-      tx,
-      post_command_aggregate,
-      events,
-      metadata,
-    ),
-  )
-
-  case event_sourcing.snapshot_config {
-    Some(config)
-      if sequence % config.snapshot_frequency == 0
-      && config.snapshot_frequency != 0
-    -> {
-      let snapshot =
-        Snapshot(
-          aggregate_id: aggregate.aggregate_id,
-          entity: post_command_aggregate.entity,
-          sequence: sequence,
-          timestamp: timestamp.to_unix_seconds_and_nanoseconds(
-            timestamp.system_time(),
-          ).0,
-        )
-      event_sourcing.event_store.save_snapshot(tx, snapshot)
-    }
-    _ -> Ok(Nil)
+  case config.snapshot_frequency.n <= 0 {
+    True -> Error("Snapshot frequency must be greater than 0")
+    False -> Ok(EventSourcing(..event_sourcing, snapshot_config: Some(config)))
   }
-  |> result.try(fn(_) {
-    event_sourcing.queries
-    |> list.map(fn(query) { query(aggregate.aggregate_id, commited_events) })
-    Ok(Nil)
-  })
 }
 
 fn load_aggregate_or_create_new(
@@ -389,14 +525,6 @@ fn load_aggregate_or_create_new(
   Aggregate(aggregate_id, instance, sequence)
 }
 
-/// Loads the current state of an aggregate.
-/// 
-/// ## Arguments
-/// - `event_sourcing`: The EventSourcing instance
-/// - `aggregate_id`: ID of the aggregate to load
-/// 
-/// ## Returns
-/// The current state of the aggregate, or an error if loading fails
 pub fn load_aggregate(
   event_sourcing event_sourcing: EventSourcing(
     eventstore,
@@ -418,44 +546,6 @@ pub fn load_aggregate(
   })
 }
 
-/// Add a query to the EventSourcing instance.
-///
-/// Queries are functions that run when events are committed.
-/// They can be used for things like updating read models or sending notifications.
-pub fn add_query(
-  eventsourcing eventsourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
-  ),
-  query query,
-) {
-  EventSourcing(..eventsourcing, queries: [query, ..eventsourcing.queries])
-}
-
-/// Loads all events for an aggregate from a specified sequence number.
-/// 
-/// This function retrieves all events for an aggregate starting from a given sequence number,
-/// allowing for partial event stream loading and event replay from a specific point in time.
-/// 
-/// ## Arguments
-/// - `event_sourcing`: The EventSourcing instance
-/// - `aggregate_id`: ID of the aggregate whose events should be loaded
-/// - `start_from`: The sequence number to start loading events from
-/// 
-/// ## Returns
-/// A Result containing:
-/// - Ok(List(EventEnvelop(event))): List of events if successful
-/// - Error(EventSourcingError): If loading fails
-/// 
-/// ## Example
-/// ```gleam
-/// let assert Ok(events) = load_events(event_sourcing, "account-123", 5)
-/// // events will contain all events for account-123 starting from sequence 5
-/// ```
 pub fn load_events(
   event_sourcing event_sourcing: EventSourcing(
     eventstore,
@@ -476,30 +566,27 @@ pub fn load_events(
   )
 }
 
-/// Retrieves the most recent snapshot for an aggregate if it exists.
-/// 
-/// This function attempts to load the latest snapshot for an aggregate, which can be
-/// used as a starting point for rebuilding aggregate state without replaying all events
-/// from the beginning.
-/// 
-/// ## Arguments
-/// - `event_sourcing`: The EventSourcing instance
-/// - `aggregate_id`: ID of the aggregate to get the snapshot for
-/// 
-/// ## Returns
-/// A Result containing:
-/// - Ok(Some(Snapshot)): The latest snapshot if one exists
-/// - Ok(None): If no snapshot exists for the aggregate
-/// - Error(EventSourcingError): If snapshot retrieval fails
-/// 
-/// ## Example
-/// ```gleam
-/// let assert Ok(maybe_snapshot) = get_latest_snapshot(event_sourcing, "account-123")
-/// case maybe_snapshot {
-///   Some(snapshot) -> // Use snapshot as starting point
-///   None -> // No snapshot exists, start from initial state
-/// }
-/// ```
+pub fn load_events_from(
+  event_sourcing event_sourcing: EventSourcing(
+    eventstore,
+    entity,
+    command,
+    event,
+    error,
+    transaction_handle,
+  ),
+  aggregate_id aggregate_id: AggregateId,
+  start_from start_from: Int,
+) -> Result(List(EventEnvelop(event)), EventSourcingError(error)) {
+  use tx <- event_sourcing.event_store.load_events_transaction()
+  event_sourcing.event_store.load_events(
+    event_sourcing.event_store.eventstore,
+    tx,
+    aggregate_id,
+    start_from,
+  )
+}
+
 pub fn get_latest_snapshot(
   event_sourcing event_sourcing: EventSourcing(
     eventstore,
@@ -512,12 +599,53 @@ pub fn get_latest_snapshot(
   aggregate_id aggregate_id: AggregateId,
 ) -> Result(Option(Snapshot(entity)), EventSourcingError(error)) {
   use tx <- event_sourcing.event_store.get_latest_snapshot_transaction()
-  // If snapshots are not configured, return None
   case event_sourcing.snapshot_config {
     None -> Ok(None)
     Some(_) -> {
-      // Load snapshot from event store
       event_sourcing.event_store.load_snapshot(tx, aggregate_id)
     }
+  }
+}
+
+pub fn start_queries(
+  queries: List(Query(event)),
+) -> Result(List(QueryActor(event)), actor.StartError) {
+  list.map(queries, start_query)
+  |> result.all
+}
+
+pub fn query_actor_count(eventsourcing: EventSourcing(_, _, _, _, _, _)) -> Int {
+  list.length(eventsourcing.query_actors)
+}
+
+fn start_query(
+  query: Query(event),
+) -> Result(QueryActor(event), actor.StartError) {
+  use actor <- result.try(
+    actor.new(Nil)
+    |> actor.on_message(fn(_, message) {
+      case message {
+        ProcessEvents(aggregate_id, events) -> {
+          query(aggregate_id, events)
+          actor.continue(Nil)
+        }
+      }
+    })
+    |> actor.start(),
+  )
+  Ok(QueryActor(actor:, query:))
+}
+
+pub fn timeout(ms ms: Int) -> Result(Timeout, EventSourcingError(_)) {
+  case ms <= 0 {
+    True -> Error(NonPositiveArgument)
+    False -> Ok(Timeout(ms))
+  }
+}
+
+pub fn frequency(n n: Int) -> Result(Frequency, EventSourcingError(_)) {
+  case n <= 0 {
+    True -> Error(NonPositiveArgument)
+    False -> Ok(Frequency(n))
   }
 }
