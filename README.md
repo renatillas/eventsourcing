@@ -402,48 +402,6 @@ case process.receive(agg_stats_subject, 1000) {
 }
 ```
 
-**Comprehensive Error Handling**
-
-The library provides enhanced error types with detailed context:
-
-```gleam
-pub type EventSourcingError(domainerror) {
-  DomainError(domainerror)                                    // Business rule violations
-  EventStoreError(String)                                     // Storage/persistence errors  
-  EntityNotFound                                              // Aggregate doesn't exist
-  NonPositiveArgument                                         // Invalid input validation
-  TransactionFailed                                           // Transaction processing failed
-  TransactionRolledBack                                       // Transaction was rolled back
-  ActorTimeout(operation: String, timeout_ms: Int)           // Actor communication timeouts
-  InvalidAggregateId(aggregate_id: String, reason: String)   // Aggregate ID validation
-  QueryActorFailed(query_id: String, error: String)         // Query processing failures
-  SnapshotError(aggregate_id: String, error: String)        // Snapshot operation errors
-  ConcurrencyError(                                          // Optimistic concurrency failures
-    aggregate_id: String, 
-    expected_sequence: Int, 
-    actual_sequence: Int
-  )
-}
-
-// Domain errors no longer crash actors - they're handled gracefully
-case result {
-  Error(eventsourcing.DomainError(domain_error)) -> {
-    io.println("Business rule violation: " <> string.inspect(domain_error))
-    // Actor continues running
-  }
-  Error(eventsourcing.ActorTimeout(operation, timeout_ms)) -> {
-    io.println(operation <> " timed out after " <> int.to_string(timeout_ms) <> "ms")
-  }
-  Error(eventsourcing.ConcurrencyError(agg_id, expected, actual)) -> {
-    io.println("Concurrency conflict in " <> agg_id <> ": expected seq " 
-      <> int.to_string(expected) <> " but was " <> int.to_string(actual))
-  }
-  Error(eventsourcing.EntityNotFound) -> {
-    io.println("Aggregate not found - create it first")
-  }
-}
-```
-
 ## Migration from v7
 
 ### Key Changes
@@ -555,4 +513,3 @@ includes appropriate tests.
 
 This project is licensed under the MIT License.
 See the [LICENSE](LICENSE) file for details.
-
