@@ -5,6 +5,119 @@ All notable changes to the eventsourcing project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.0.0] - Unreleased
+
+### 🚨 BREAKING CHANGES
+
+#### API Simplification
+
+- **Simplified function signatures** - All public functions now accept `process.Subject(AggregateMessage(...))` directly instead of `actor.Started(process.Subject(...))`
+- **Removed `.data` accessor requirement** - Functions now send messages directly to the actor subject
+- **Cleaner function names** - Removed `get_` prefixes from statistics functions for better ergonomics
+- **Added named actor support** - `supervised()` function now requires `process.Name` for actors and queries
+- **Enhanced query definition** - Queries now require names for better OTP actor registration
+
+#### Function Name Changes
+
+- `get_system_stats()` → `system_stats()`
+- `get_aggregate_stats()` → `aggregate_stats()`
+- `get_latest_snapshot()` → `latest_snapshot()`
+
+#### Parameter Type Changes
+
+**1. Function Parameter Simplification**
+
+All functions that previously accepted:
+
+```gleam
+eventsourcing_actor: actor.Started(process.Subject(AggregateMessage(...)))
+```
+
+Now accept:
+
+```gleam
+eventsourcing_actor: process.Subject(AggregateMessage(...))
+```
+
+**2. Named Actor Support**
+
+The `supervised()` function now requires named actors for better OTP integration:
+
+```gleam
+// v8.0
+eventsourcing.supervised(
+  eventstore, handle: handle, apply: apply,
+  empty_state: state, queries: [query1, query2], // queries as simple list
+  eventsourcing_actor_receiver: receiver1,
+  query_actors_receiver: receiver2,
+  snapshot_config: None
+)
+
+// v9.0  
+eventsourcing.supervised(
+  name: process.named("eventsourcing_actor"),  // NEW: named actor required
+  eventstore: eventstore, handle: handle, apply: apply,
+  empty_state: state,
+  queries: [(process.named("query1"), query1), (process.named("query2"), query2)], // NEW: named queries
+  snapshot_config: None
+)
+```
+
+### ✨ Improvements
+
+- **Enhanced Developer Experience** - Cleaner, more intuitive API surface
+- **Simplified Message Passing** - Direct subject communication without extra indirection
+- **Better Function Names** - More concise naming convention for statistics functions  
+- **Named Actor Support** - Improved OTP integration with named actors for better monitoring and debugging
+- **Structured Query Definition** - Named queries provide clearer actor identification in supervision trees
+- **Maintained Functionality** - All v8.0 features preserved with cleaner interfaces
+
+### 🔄 Migration Guide
+
+**From v8.0 to v9.0:**
+
+1. Remove `.data` from all function calls:
+
+   ```gleam
+   // v8.0
+   eventsourcing.execute(eventsourcing_actor.data, "agg-123", command)
+   
+   // v9.0
+   eventsourcing.execute(eventsourcing_actor, "agg-123", command)
+   ```
+
+2. Update statistics function names:
+
+   ```gleam
+   // v8.0
+   let stats = eventsourcing.get_system_stats(eventsourcing_actor.data)
+   
+   // v9.0  
+   let stats = eventsourcing.system_stats(eventsourcing_actor)
+   ```
+
+3. Add named actor support to `supervised()`:
+
+   ```gleam
+   // v8.0
+   let assert Ok(spec) = eventsourcing.supervised(
+     eventstore, handle: handle, apply: apply,
+     empty_state: state, queries: [balance_query],
+     eventsourcing_actor_receiver: receiver1,
+     query_actors_receiver: receiver2,
+     snapshot_config: None
+   )
+   
+   // v9.0
+   let assert Ok(spec) = eventsourcing.supervised(
+     name: process.named("eventsourcing_actor"),
+     eventstore: eventstore, handle: handle, apply: apply,
+     empty_state: state, 
+     queries: [(process.named("balance_query"), balance_query)],
+     snapshot_config: None
+   )
+   ```
+
 ## [8.0.0] - 2025-09-02
 
 ### 🚨 BREAKING CHANGES
@@ -141,4 +254,3 @@ For changes in v7.0.0 and earlier, please refer to the git history
 
 [8.0.0]: https://github.com/renatillas/eventsourcing/compare/v7.0.0...v8.0.0
 [7.0.0]: https://github.com/renatillas/eventsourcing/releases/tag/v7.0.0
-

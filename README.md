@@ -34,10 +34,10 @@
   - [Command Handling](#command-handling)
   - [Event Application](#event-application)
   - [Supervised Usage (Recommended)](#supervised-usage-recommended)
-  - [Simple Usage (Testing)](#simple-usage-testing)
+  - [Async API Usage](#async-api-usage)
   - [Snapshot Configuration](#snapshot-configuration)
   - [Error Handling](#error-handling)
-- [Migration from v7](#migration-from-v7)
+- [Migration Guide](#migration-guide)
 - [Philosophy](#philosophy)
 - [Installation](#installation)
 - [Support](#support)
@@ -48,7 +48,7 @@
 
 Eventsourcing is a Gleam library for building robust, concurrent event-sourced systems using OTP supervision trees. Event sourcing stores changes to application state as a sequence of immutable events, providing excellent auditability, debugging capabilities, and system resilience.
 
-**Version 8.0** introduces a complete architectural rewrite with supervision trees, asynchronous query processing, and enhanced fault tolerance for production-ready event-sourced systems.
+**Version 9.0** introduces API simplifications with cleaner function signatures and streamlined message passing for improved developer experience while maintaining all the production-ready features from v8.0.
 
 ## Architecture
 
@@ -140,7 +140,7 @@ eventsourcing.execute(eventsourcing_actor, "aggregate-123", MyCommand)
 
 // 7. Load events and monitor system
 let events_subject = eventsourcing.load_events(eventsourcing_actor, "aggregate-123")
-let stats_subject = eventsourcing.get_system_stats(eventsourcing_actor)
+let stats_subject = eventsourcing.system_stats(eventsourcing_actor)
 ```
 
 ## Example
@@ -241,13 +241,13 @@ pub fn main() {
   // Create supervised system
   let assert Ok(memory_store) = memory_store.new()
   let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
-    memory_store,
+    name: process.named("eventsourcing_actor"),
+    eventstore: memory_store,
     handle: handle,
     apply: apply, 
     empty_state: UnopenedBankAccount,
-    queries: [balance_query],
-    eventsourcing_actor_receiver:,
-    query_actors_receiver:,
+    queries: [(process.named("balance_query"), balance_query)],
+    snapshot_config: None,
   )
 
   // Start supervision tree
@@ -294,13 +294,12 @@ pub fn async_example() {
   let query_actors_receiver = process.new_subject()
   
   let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
-    memory_store,
+    name: process.named("eventsourcing_actor"),
+    eventstore: memory_store,
     handle: handle,
     apply: apply,
     empty_state: UnopenedBankAccount,
     queries: [],
-    eventsourcing_actor_receiver:,
-    query_actors_receiver:,
     snapshot_config: None,
   )
 
@@ -340,18 +339,17 @@ let snapshot_config = eventsourcing.SnapshotConfig(frequency)
 
 // Enable snapshots during supervised system setup
 let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
-  memory_store,
+  name: process.named("eventsourcing_actor"),
+  eventstore: memory_store,
   handle: handle,
   apply: apply,
   empty_state: UnopenedBankAccount,
   queries: [],
-  eventsourcing_actor_receiver:,
-  query_actors_receiver:,
   snapshot_config: Some(snapshot_config), // Enable snapshots
 )
 
 // Load latest snapshot asynchronously
-let snapshot_subject = eventsourcing.get_latest_snapshot(eventsourcing_actor, "account-123")
+let snapshot_subject = eventsourcing.latest_snapshot(eventsourcing_actor, "account-123")
 case process.receive(snapshot_subject, 1000) {
   Ok(Ok(Some(snapshot))) -> {
     io.println("Using snapshot from sequence " <> int.to_string(snapshot.sequence))
@@ -380,18 +378,17 @@ eventsourcing.execute_with_metadata(
 
 ```gleam
 // Get system health statistics
-let stats_subject = eventsourcing.get_system_stats(eventsourcing_actor)
+let stats_subject = eventsourcing.system_stats(eventsourcing_actor)
 case process.receive(stats_subject, 1000) {
   Ok(stats) -> {
     io.println("Query actors: " <> int.to_string(stats.query_actors_count))
     io.println("Commands processed: " <> int.to_string(stats.total_commands_processed))
-    io.println("Uptime: " <> int.to_string(stats.uptime_seconds) <> " seconds")
   }
   Error(_) -> io.println("Timeout getting stats")
 }
 
 // Get individual aggregate statistics  
-let agg_stats_subject = eventsourcing.get_aggregate_stats(eventsourcing_actor, "account-123")
+let agg_stats_subject = eventsourcing.aggregate_stats(eventsourcing_actor, "account-123")
 case process.receive(agg_stats_subject, 1000) {
   Ok(Ok(stats)) -> {
     io.println("Aggregate: " <> stats.aggregate_id)
@@ -402,7 +399,65 @@ case process.receive(agg_stats_subject, 1000) {
 }
 ```
 
-## Migration from v7
+## Migration Guide
+
+### Migrating from v8 to v9
+
+**Version 9.0** introduces API simplifications to improve the developer experience:
+
+#### Key Changes
+- **Simplified function signatures**: All public functions now accept `process.Subject(...)` directly instead of `actor.Started(...)`
+- **Cleaner function names**: Removed `get_` prefixes from stats functions (`system_stats`, `aggregate_stats`, `latest_snapshot`)
+- **Direct message passing**: Functions send messages directly without `.data` accessor
+
+#### Migration Steps
+
+**1. Update Function Calls - Remove .data accessor**
+```gleam
+// v8.0
+eventsourcing.execute(eventsourcing_actor.data, "agg-123", command)
+eventsourcing.load_aggregate(eventsourcing_actor.data, "agg-123")
+
+// v9.0 - Direct subject passing
+eventsourcing.execute(eventsourcing_actor, "agg-123", command)
+eventsourcing.load_aggregate(eventsourcing_actor, "agg-123")
+```
+
+**2. Update Statistics Function Names**
+```gleam
+// v8.0
+let stats = eventsourcing.get_system_stats(eventsourcing_actor.data)
+let agg_stats = eventsourcing.get_aggregate_stats(eventsourcing_actor.data, "agg-123")
+let snapshot = eventsourcing.get_latest_snapshot(eventsourcing_actor.data, "agg-123")
+
+// v9.0 - Cleaner names
+let stats = eventsourcing.system_stats(eventsourcing_actor)
+let agg_stats = eventsourcing.aggregate_stats(eventsourcing_actor, "agg-123") 
+let snapshot = eventsourcing.latest_snapshot(eventsourcing_actor, "agg-123")
+```
+
+**3. Add Named Actor Support**
+```gleam
+// v8.0
+let assert Ok(spec) = eventsourcing.supervised(
+  eventstore, handle: handle, apply: apply,
+  empty_state: state, queries: [balance_query],
+  eventsourcing_actor_receiver: receiver1,
+  query_actors_receiver: receiver2,
+  snapshot_config: None
+)
+
+// v9.0 - Named actors required
+let assert Ok(spec) = eventsourcing.supervised(
+  name: process.named("eventsourcing_actor"),
+  eventstore: eventstore, handle: handle, apply: apply,
+  empty_state: state, 
+  queries: [(process.named("balance_query"), balance_query)],
+  snapshot_config: None
+)
+```
+
+### Migrating from v7 to v9
 
 ### Key Changes
 
