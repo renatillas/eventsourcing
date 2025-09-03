@@ -3,6 +3,7 @@ import eventsourcing/memory_store
 import example_bank_account
 import gleam/erlang/process
 import gleam/list
+import gleam/option.{None}
 import gleam/otp/static_supervisor
 import gleeunit
 
@@ -33,6 +34,7 @@ pub fn supervised_architecture_test() {
       queries:,
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(supervisor) =
@@ -46,7 +48,7 @@ pub fn supervised_architecture_test() {
   let assert Ok(query_actors) =
     list.try_map(queries, fn(_) { process.receive(query_actors_receiver, 1000) })
 
-  eventsourcing.register_queries(eventsourcing_actor.data, query_actors)
+  eventsourcing.register_queries(eventsourcing_actor, query_actors)
 
   // Give time for actors to start
   process.sleep(100)

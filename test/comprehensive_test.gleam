@@ -4,7 +4,7 @@ import example_bank_account
 import gleam/erlang/process
 import gleam/int
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/otp/static_supervisor
 import gleeunit
 
@@ -33,6 +33,7 @@ pub fn basic_command_execution_test() {
       queries:,
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -46,7 +47,7 @@ pub fn basic_command_execution_test() {
   let assert Ok(query_actors) =
     list.try_map(queries, fn(_) { process.receive(query_actors_receiver, 1000) })
 
-  eventsourcing.register_queries(eventsourcing_actor.data, query_actors)
+  eventsourcing.register_queries(eventsourcing_actor, query_actors)
   process.sleep(100)
 
   // Open account
@@ -76,20 +77,6 @@ pub fn basic_command_execution_test() {
 
 pub fn aggregate_loading_test() {
   let assert Ok(memory_store) = memory_store.new()
-  let assert Ok(eventsourcing) =
-    eventsourcing.new(
-      memory_store,
-      queries: [],
-      handle: example_bank_account.handle,
-      apply: example_bank_account.apply,
-      empty_state: example_bank_account.UnopenedBankAccount,
-    )
-
-  // Try to load non-existent aggregate
-  let assert Error(eventsourcing.EntityNotFound) =
-    eventsourcing.load_aggregate(eventsourcing, "nonexistent")
-
-  // Execute commands to create aggregate
   let eventsourcing_actor_receiver = process.new_subject()
   let query_actors_receiver = process.new_subject()
   let assert Ok(eventsourcing_spec) =
@@ -101,6 +88,7 @@ pub fn aggregate_loading_test() {
       queries: [],
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -111,6 +99,12 @@ pub fn aggregate_loading_test() {
   let assert Ok(eventsourcing_actor) =
     process.receive(eventsourcing_actor_receiver, 2000)
 
+  // Try to load non-existent aggregate
+  let load_subject =
+    eventsourcing.load_aggregate(eventsourcing_actor, "nonexistent")
+  let assert Ok(Error(eventsourcing.EntityNotFound)) =
+    process.receive(load_subject, 1000)
+
   // Create aggregate
   eventsourcing.execute(
     eventsourcing_actor,
@@ -120,8 +114,9 @@ pub fn aggregate_loading_test() {
   process.sleep(100)
 
   // Now load should work
-  let assert Ok(aggregate) =
-    eventsourcing.load_aggregate(eventsourcing, "load-test")
+  let load_subject2 =
+    eventsourcing.load_aggregate(eventsourcing_actor, "load-test")
+  let assert Ok(Ok(aggregate)) = process.receive(load_subject2, 1000)
   assert aggregate.aggregate_id == "load-test"
   assert aggregate.sequence == 1
   case aggregate.entity {
@@ -145,6 +140,7 @@ pub fn event_loading_test() {
       queries: [],
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -154,15 +150,6 @@ pub fn event_loading_test() {
 
   let assert Ok(eventsourcing_actor) =
     process.receive(eventsourcing_actor_receiver, 2000)
-
-  let assert Ok(eventsourcing) =
-    eventsourcing.new(
-      memory_store,
-      queries: [],
-      handle: example_bank_account.handle,
-      apply: example_bank_account.apply,
-      empty_state: example_bank_account.UnopenedBankAccount,
-    )
 
   // Create multiple events
   eventsourcing.execute(
@@ -182,32 +169,21 @@ pub fn event_loading_test() {
   )
   process.sleep(200)
 
-  // Load all events
-  let assert Ok(all_events) =
-    eventsourcing.load_events(eventsourcing, "events-test")
-  assert list.length(all_events) == 3
-
   // Load events from sequence 2 (drops first 2, leaves 1)
-  let assert Ok(partial_events) =
-    eventsourcing.load_events_from(eventsourcing, "events-test", 2)
+  let events_subject =
+    eventsourcing.load_events_from(eventsourcing_actor, "events-test", 2)
+  let assert Ok(Ok(partial_events)) = process.receive(events_subject, 1000)
   assert list.length(partial_events) == 1
 
   // Load events from non-existent aggregate
-  let assert Ok(empty_events) =
-    eventsourcing.load_events(eventsourcing, "nonexistent")
+  let empty_events_subject =
+    eventsourcing.load_events_from(eventsourcing_actor, "nonexistent", 0)
+  let assert Ok(Ok(empty_events)) = process.receive(empty_events_subject, 1000)
   assert empty_events == []
 }
 
 pub fn snapshot_functionality_test() {
   let assert Ok(memory_store) = memory_store.new()
-  let assert Ok(eventsourcing) =
-    eventsourcing.new(
-      memory_store,
-      queries: [],
-      handle: example_bank_account.handle,
-      apply: example_bank_account.apply,
-      empty_state: example_bank_account.UnopenedBankAccount,
-    )
 
   // Test snapshot frequency validation
   let assert Ok(frequency) = eventsourcing.frequency(3)
@@ -216,16 +192,7 @@ pub fn snapshot_functionality_test() {
   let assert Error(eventsourcing.NonPositiveArgument) =
     eventsourcing.frequency(-1)
 
-  // Enable snapshots
   let snapshot_config = eventsourcing.SnapshotConfig(frequency)
-  let assert Ok(eventsourcing_with_snapshots) =
-    eventsourcing.with_snapshots(eventsourcing, snapshot_config)
-
-  // Test no snapshot initially
-  let assert Ok(None) =
-    eventsourcing.get_latest_snapshot(eventsourcing_with_snapshots, "snap-test")
-
-  // Execute supervised commands to trigger snapshots
   let eventsourcing_actor_receiver = process.new_subject()
   let query_actors_receiver = process.new_subject()
   let assert Ok(eventsourcing_spec) =
@@ -237,6 +204,7 @@ pub fn snapshot_functionality_test() {
       queries: [],
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: Some(snapshot_config),
     )
 
   let assert Ok(_supervisor) =
@@ -246,6 +214,11 @@ pub fn snapshot_functionality_test() {
 
   let assert Ok(eventsourcing_actor) =
     process.receive(eventsourcing_actor_receiver, 2000)
+
+  // Test no snapshot initially
+  let snapshot_subject =
+    eventsourcing.latest_snapshot(eventsourcing_actor, "snap-test")
+  let assert Ok(Ok(None)) = process.receive(snapshot_subject, 1000)
 
   // Execute 3 commands to trigger snapshot
   eventsourcing.execute(
@@ -308,6 +281,7 @@ pub fn multiple_query_actors_test() {
       queries:,
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -321,7 +295,7 @@ pub fn multiple_query_actors_test() {
   let assert Ok(query_actors) =
     list.try_map(queries, fn(_) { process.receive(query_actors_receiver, 1000) })
 
-  eventsourcing.register_queries(eventsourcing_actor.data, query_actors)
+  eventsourcing.register_queries(eventsourcing_actor, query_actors)
   process.sleep(100)
 
   // Execute command
@@ -353,6 +327,7 @@ pub fn error_handling_test() {
       queries: [],
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -417,6 +392,7 @@ pub fn multiple_aggregates_test() {
       queries:,
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -430,7 +406,7 @@ pub fn multiple_aggregates_test() {
   let assert Ok(query_actors) =
     list.try_map(queries, fn(_) { process.receive(query_actors_receiver, 1000) })
 
-  eventsourcing.register_queries(eventsourcing_actor.data, query_actors)
+  eventsourcing.register_queries(eventsourcing_actor, query_actors)
   process.sleep(100)
 
   // Create multiple aggregates
@@ -464,6 +440,16 @@ pub fn multiple_aggregates_test() {
     let assert Ok(#(received_id, 1)) = process.receive(query_results, 1000)
     assert received_id == id
   })
+
+  // Test aggregate stats
+  let stats_result =
+    eventsourcing.aggregate_stats(eventsourcing_actor, "acc-001")
+  let assert Ok(Ok(stats)) = process.receive(stats_result, 1000)
+  assert stats.aggregate_id == "acc-001"
+  assert stats.event_count == 2
+  // OpenAccount + DepositMoney
+  assert stats.current_sequence == 2
+  assert stats.has_snapshot == False
 }
 
 pub fn complex_business_logic_test() {
@@ -479,6 +465,7 @@ pub fn complex_business_logic_test() {
       queries: [],
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -488,15 +475,6 @@ pub fn complex_business_logic_test() {
 
   let assert Ok(eventsourcing_actor) =
     process.receive(eventsourcing_actor_receiver, 2000)
-
-  let assert Ok(eventsourcing) =
-    eventsourcing.new(
-      memory_store,
-      queries: [],
-      handle: example_bank_account.handle,
-      apply: example_bank_account.apply,
-      empty_state: example_bank_account.UnopenedBankAccount,
-    )
 
   // Complex banking scenario
   eventsourcing.execute(
@@ -537,8 +515,9 @@ pub fn complex_business_logic_test() {
   process.sleep(300)
 
   // Verify final state
-  let assert Ok(aggregate) =
-    eventsourcing.load_aggregate(eventsourcing, "complex-001")
+  let load_subject =
+    eventsourcing.load_aggregate(eventsourcing_actor, "complex-001")
+  let assert Ok(Ok(aggregate)) = process.receive(load_subject, 1000)
   case aggregate.entity {
     example_bank_account.BankAccount(balance) -> {
       assert balance == 1250.0
@@ -547,10 +526,71 @@ pub fn complex_business_logic_test() {
   }
   assert aggregate.sequence == 6
 
-  // Verify all events
-  let assert Ok(events) =
-    eventsourcing.load_events(eventsourcing, "complex-001")
+  // Verify all events - load events from sequence 0 (all events)
+  let events_subject =
+    eventsourcing.load_events_from(eventsourcing_actor, "complex-001", 0)
+  let assert Ok(Ok(events)) = process.receive(events_subject, 1000)
   assert list.length(events) == 6
+}
+
+pub fn new_features_test() {
+  let assert Ok(memory_store) = memory_store.new()
+  let eventsourcing_actor_receiver = process.new_subject()
+  let query_actors_receiver = process.new_subject()
+  let assert Ok(eventsourcing_spec) =
+    eventsourcing.supervised(
+      memory_store,
+      handle: example_bank_account.handle,
+      apply: example_bank_account.apply,
+      empty_state: example_bank_account.UnopenedBankAccount,
+      queries: [],
+      eventsourcing_actor_receiver:,
+      query_actors_receiver:,
+      snapshot_config: None,
+    )
+
+  let assert Ok(_supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(eventsourcing_spec)
+    |> static_supervisor.start()
+
+  let assert Ok(eventsourcing_actor) =
+    process.receive(eventsourcing_actor_receiver, 2000)
+
+  // Test load_events function (vs load_events_from)
+  eventsourcing.execute(
+    eventsourcing_actor,
+    "new-features",
+    example_bank_account.OpenAccount("new-features"),
+  )
+  process.sleep(100)
+
+  let events_subject =
+    eventsourcing.load_events(eventsourcing_actor, "new-features")
+  let assert Ok(Ok(events)) = process.receive(events_subject, 1000)
+  assert list.length(events) == 1
+
+  // Test execute_with_metadata
+  eventsourcing.execute_with_metadata(
+    eventsourcing_actor,
+    "new-features",
+    example_bank_account.DepositMoney(100.0),
+    [#("user_id", "test-user"), #("source", "test")],
+  )
+  process.sleep(100)
+
+  // Test system stats
+  let stats_subject = eventsourcing.system_stats(eventsourcing_actor)
+  let assert Ok(stats) = process.receive(stats_subject, 1000)
+  assert stats.query_actors_count == 0
+  assert stats.total_commands_processed == 2
+
+  // Test aggregate stats
+  let agg_stats_subject =
+    eventsourcing.aggregate_stats(eventsourcing_actor, "new-features")
+  let assert Ok(Ok(agg_stats)) = process.receive(agg_stats_subject, 1000)
+  assert agg_stats.aggregate_id == "new-features"
+  assert agg_stats.has_snapshot == False
 }
 
 pub fn concurrent_operations_test() {
@@ -573,6 +613,7 @@ pub fn concurrent_operations_test() {
       queries:,
       eventsourcing_actor_receiver:,
       query_actors_receiver:,
+      snapshot_config: None,
     )
 
   let assert Ok(_supervisor) =
@@ -586,9 +627,10 @@ pub fn concurrent_operations_test() {
   let assert Ok(query_actors) =
     list.try_map(queries, fn(_) { process.receive(query_actors_receiver, 1000) })
 
-  eventsourcing.register_queries(eventsourcing_actor.data, query_actors)
+  eventsourcing.register_queries(eventsourcing_actor, query_actors)
   process.sleep(100)
 
+  // Rapid fire commands on different aggregates
   list.range(1, 10)
   |> list.each(fn(i) {
     let id = "concurrent-" <> int.to_string(i)
@@ -599,6 +641,7 @@ pub fn concurrent_operations_test() {
     )
   })
 
+  // Count processed events 
   let event_count = count_events(query_counter, 0, 10)
   assert event_count == 10
 }

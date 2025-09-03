@@ -9,7 +9,8 @@
       "Bash(gleam run:*)",
       "Bash(rg:*)",
       "Bash(gleam docs:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(git show:*)"
     ],
     "deny": [],
     "ask": []

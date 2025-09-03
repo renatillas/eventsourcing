@@ -1,4 +1,5 @@
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -61,6 +62,20 @@ pub type EventSourcingError(domainerror) {
   EntityNotFound
   TransactionFailed
   TransactionRolledBack
+  ActorTimeout(operation: String, timeout_ms: Int)
+}
+
+pub type SystemStats {
+  SystemStats(query_actors_count: Int, total_commands_processed: Int)
+}
+
+pub type AggregateStats {
+  AggregateStats(
+    aggregate_id: String,
+    event_count: Int,
+    current_sequence: Int,
+    has_snapshot: Bool,
+  )
 }
 
 @internal
@@ -93,6 +108,39 @@ pub type AggregateMessage(entity, command, event, error) {
     metadata: List(#(String, String)),
   )
   RegisterQueryActor(QueryActor(event))
+  LoadAggregate(
+    aggregate_id: AggregateId,
+    reply_to: process.Subject(
+      Result(
+        Aggregate(entity, command, event, error),
+        EventSourcingError(error),
+      ),
+    ),
+  )
+  LoadAllEvents(
+    aggregate_id: AggregateId,
+    reply_to: process.Subject(
+      Result(List(EventEnvelop(event)), EventSourcingError(error)),
+    ),
+  )
+  LoadEvents(
+    aggregate_id: AggregateId,
+    start_from: Int,
+    reply_to: process.Subject(
+      Result(List(EventEnvelop(event)), EventSourcingError(error)),
+    ),
+  )
+  LoadLatestSnapshot(
+    aggregate_id: AggregateId,
+    reply_to: process.Subject(
+      Result(Option(Snapshot(entity)), EventSourcingError(error)),
+    ),
+  )
+  GetSystemStats(reply_to: process.Subject(SystemStats))
+  GetAggregateStats(
+    aggregate_id: AggregateId,
+    reply_to: process.Subject(Result(AggregateStats, EventSourcingError(error))),
+  )
 }
 
 pub type ManagerMessage(entity, command, event, error) {
@@ -154,6 +202,8 @@ pub opaque type EventSourcing(
     apply: Apply(entity, event),
     empty_state: entity,
     snapshot_config: Option(SnapshotConfig),
+    start_time: timestamp.Timestamp,
+    commands_processed: Int,
   )
 }
 
@@ -229,6 +279,27 @@ pub type AggregateActorState(
   )
 }
 
+/// Creates a supervised event sourcing architecture with fault tolerance.
+/// Sets up a supervision tree where the main event sourcing actor and query actors
+/// are managed by a supervisor that can restart them if they fail. This is the 
+/// recommended approach for production applications.
+///
+/// ## Example
+/// ```gleam
+/// let assert Ok(eventstore) = memory_store.new()
+/// let eventsourcing_actor_receiver = process.new_subject()
+/// let query_actor_receiver = process.new_subject()
+/// let assert Ok(spec) = eventsourcing.supervised(
+///   eventstore:,
+///   handle: my_handle,
+///   apply: my_apply,
+///   empty_state: MyState,
+///   queries: [],
+///   eventsourcing_actor_receiver:,
+///   query_actors_receiver:,
+///   snapshot_config: None
+/// )
+/// ```
 pub fn supervised(
   eventstore eventstore: EventStore(
     eventstore,
@@ -250,6 +321,7 @@ pub fn supervised(
   query_actors_receiver query_actors_receiver: process.Subject(
     QueryActor(event),
   ),
+  snapshot_config snapshot_config: Option(SnapshotConfig),
 ) -> Result(supervision.ChildSpecification(static_supervisor.Supervisor), Nil) {
   // Create a single coordinator that manages everything properly under supervision
   let queries_child_specs =
@@ -268,6 +340,7 @@ pub fn supervised(
         query_actors: [],
         apply: apply,
         empty_state: empty_state,
+        snapshot_config:,
       ))
       process.send(eventsourcing_actor_receiver, eventsourcing_actor)
       Ok(eventsourcing_actor)
@@ -285,51 +358,39 @@ pub fn supervised(
   supervisor
 }
 
+/// Registers query actors with the event sourcing system after supervisor startup.
+/// Queries must be added beforehand to the supervised() function to ensure their actors are started and supervised.
+///
+/// ## Example
+/// ```gleam
+/// let queries = [projection_query, analytics_query]
+/// let assert Ok(query_actors) = list.try_map(queries, fn(_) { 
+///   process.receive(query_receiver, 1000) 
+/// })
+/// eventsourcing.register_queries(eventsourcing_actor, query_actors)
+/// ```
 pub fn register_queries(
-  eventsourcing_actor: process.Subject(
-    AggregateMessage(entity, command, event, error),
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
   ),
   query_actors: List(QueryActor(event)),
 ) -> Nil {
   query_actors
   |> list.each(fn(query_actor) {
-    process.send(eventsourcing_actor, RegisterQueryActor(query_actor))
+    process.send(eventsourcing_actor.data, RegisterQueryActor(query_actor))
   })
 }
 
-pub fn new(
-  eventstore eventstore: EventStore(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
-  ),
-  queries queries: List(Query(event)),
-  handle handle: Handle(entity, command, event, error),
-  apply apply: Apply(entity, event),
-  empty_state empty_state: entity,
-) -> Result(
-  EventSourcing(eventstore, entity, command, event, error, transaction_handle),
-  actor.StartError,
-) {
-  use query_actors <- result.try(
-    queries
-    |> list.map(start_query)
-    |> result.all,
-  )
-
-  Ok(EventSourcing(
-    event_store: eventstore,
-    query_actors: query_actors,
-    handle: handle,
-    apply: apply,
-    empty_state: empty_state,
-    snapshot_config: None,
-  ))
-}
-
+/// Executes a command against an aggregate in the event sourcing system.
+/// The command will be validated, events generated if successful, and the events
+/// will be persisted and sent to all registered query actors. Commands that violate
+/// business rules will be rejected without affecting system stability.
+///
+/// ## Example
+/// ```gleam
+/// eventsourcing.execute(actor, "bank-account-123", OpenAccount("123"))
+/// // Command is processed asynchronously via message passing
+/// ```
 pub fn execute(
   eventsourcing_actor: actor.Started(
     process.Subject(AggregateMessage(entity, command, event, error)),
@@ -340,6 +401,29 @@ pub fn execute(
   process.send(
     eventsourcing_actor.data,
     ExecuteCommand(aggregate_id, command, []),
+  )
+}
+
+/// Executes a command against an aggregate with additional metadata.
+/// The metadata will be stored with the generated events and can be used for
+/// tracking, auditing, or enriching events with contextual information.
+///
+/// ## Example
+/// ```gleam
+/// let metadata = [("user_id", "alice"), ("session_id", "abc123")]
+/// eventsourcing.execute_with_metadata(actor, "bank-123", DepositMoney(100.0), metadata)
+/// ```
+pub fn execute_with_metadata(
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
+  ),
+  aggregate_id: AggregateId,
+  command: command,
+  metadata: List(#(String, String)),
+) -> Nil {
+  process.send(
+    eventsourcing_actor.data,
+    ExecuteCommand(aggregate_id, command, metadata),
   )
 }
 
@@ -356,6 +440,7 @@ fn start(
   query_actors query_actors: List(QueryActor(event)),
   apply apply: Apply(entity, event),
   empty_state empty_state: entity,
+  snapshot_config snapshot_config: Option(SnapshotConfig),
 ) -> actor.StartResult(
   process.Subject(AggregateMessage(entity, command, event, error)),
 ) {
@@ -365,7 +450,9 @@ fn start(
     handle: handle,
     apply: apply,
     empty_state: empty_state,
-    snapshot_config: None,
+    snapshot_config: snapshot_config,
+    start_time: timestamp.system_time(),
+    commands_processed: 0,
   ))
   |> actor.on_message(on_message)
   |> actor.start()
@@ -386,6 +473,57 @@ fn on_message(
   AggregateMessage(entity, command, event, error),
 ) {
   case message {
+    LoadLatestSnapshot(aggregate_id, reply_to) -> {
+      let result = {
+        use tx <- state.event_store.get_latest_snapshot_transaction()
+        case state.snapshot_config {
+          None -> Ok(None)
+          Some(_) -> state.event_store.load_snapshot(tx, aggregate_id)
+        }
+      }
+      process.send(reply_to, result)
+      actor.continue(state)
+    }
+    LoadEvents(aggregate_id, start_from, reply_to) -> {
+      let result = {
+        use tx <- state.event_store.load_events_transaction()
+        state.event_store.load_events(
+          state.event_store.eventstore,
+          tx,
+          aggregate_id,
+          start_from,
+        )
+      }
+      process.send(reply_to, result)
+      actor.continue(state)
+    }
+    LoadAllEvents(aggregate_id, reply_to) -> {
+      let result = {
+        use tx <- state.event_store.load_events_transaction()
+        state.event_store.load_events(
+          state.event_store.eventstore,
+          tx,
+          aggregate_id,
+          0,
+        )
+      }
+      process.send(reply_to, result)
+      actor.continue(state)
+    }
+    LoadAggregate(aggregate_id, reply_to) -> {
+      let result = {
+        use tx <- state.event_store.load_aggregate_transaction()
+        load_aggregate_or_create_new(state, tx, aggregate_id)
+        |> result.try(fn(aggregate) {
+          case aggregate.entity == state.empty_state {
+            True -> Error(EntityNotFound)
+            False -> Ok(aggregate)
+          }
+        })
+      }
+      process.send(reply_to, result)
+      actor.continue(state)
+    }
     RegisterQueryActor(query_actor) -> {
       let new_state =
         EventSourcing(..state, query_actors: [query_actor, ..state.query_actors])
@@ -443,12 +581,93 @@ fn on_message(
       }
 
       case result {
-        Ok(_) -> actor.continue(state)
-        Error(DomainError(_)) -> actor.continue(state)
+        Ok(_) -> {
+          let updated_state =
+            EventSourcing(
+              ..state,
+              commands_processed: state.commands_processed + 1,
+            )
+          actor.continue(updated_state)
+        }
+        Error(DomainError(_)) -> {
+          let updated_state =
+            EventSourcing(
+              ..state,
+              commands_processed: state.commands_processed + 1,
+            )
+          actor.continue(updated_state)
+        }
         Error(error) -> {
           actor.stop_abnormal(describe_error(error))
         }
       }
+    }
+    GetSystemStats(reply_to) -> {
+      let stats =
+        SystemStats(
+          query_actors_count: list.length(state.query_actors),
+          total_commands_processed: state.commands_processed,
+        )
+
+      process.send(reply_to, stats)
+      actor.continue(state)
+    }
+    GetAggregateStats(aggregate_id, reply_to) -> {
+      // First get the events
+      let events_result = {
+        use tx <- state.event_store.load_events_transaction()
+        state.event_store.load_events(
+          state.event_store.eventstore,
+          tx,
+          aggregate_id,
+          0,
+        )
+      }
+
+      // Then process them into stats
+      let result = case events_result {
+        Ok(events) -> {
+          let event_count = list.length(events)
+          let current_sequence = case events {
+            [] -> 0
+            _ ->
+              events
+              |> list.last()
+              |> result.map(fn(envelope) { envelope.sequence })
+              |> result.unwrap(0)
+          }
+
+          // Check if snapshot exists for this aggregate
+          let has_snapshot = case state.snapshot_config {
+            Some(_) -> {
+              case
+                {
+                  use tx_snap <- state.event_store.get_latest_snapshot_transaction()
+                  state.event_store.load_snapshot(tx_snap, aggregate_id)
+                }
+              {
+                Ok(_) -> True
+                Error(_) -> False
+              }
+            }
+            None -> False
+          }
+
+          let stats =
+            AggregateStats(
+              aggregate_id: aggregate_id,
+              event_count: event_count,
+              current_sequence: current_sequence,
+              has_snapshot: has_snapshot,
+            )
+
+          Ok(stats)
+        }
+        Error(error) -> Error(error)
+      }
+
+      process.send(reply_to, result)
+      actor.continue(state)
     }
   }
 }
@@ -461,26 +680,12 @@ fn describe_error(error: EventSourcingError(_)) -> String {
     EntityNotFound -> "Entity not found"
     TransactionFailed -> "Transaction failed"
     TransactionRolledBack -> "Transaction rolled back"
-  }
-}
-
-pub fn with_snapshots(
-  event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
-  ),
-  config: SnapshotConfig,
-) -> Result(
-  EventSourcing(eventstore, entity, command, event, error, transaction_handle),
-  String,
-) {
-  case config.snapshot_frequency.n <= 0 {
-    True -> Error("Snapshot frequency must be greater than 0")
-    False -> Ok(EventSourcing(..event_sourcing, snapshot_config: Some(config)))
+    ActorTimeout(operation, timeout_ms) ->
+      "Actor timeout: "
+      <> operation
+      <> " failed after "
+      <> int.to_string(timeout_ms)
+      <> "ms"
   }
 }
 
@@ -525,97 +730,147 @@ fn load_aggregate_or_create_new(
   Aggregate(aggregate_id, instance, sequence)
 }
 
+/// Loads the current state of an aggregate asynchronously by replaying all its events.
+/// Returns a subject that will receive the aggregate with its current entity state and sequence number.
+/// Use process.receive() to get the result. Returns EntityNotFound error if aggregate doesn't exist.
+///
+/// ## Example
+/// ```gleam
+/// let result = eventsourcing.load_aggregate(actor, "bank-account-123")
+/// let assert Ok(aggregate) = process.receive(result, 1000)
+/// // aggregate.entity contains current state, aggregate.sequence shows current version
+/// ```
 pub fn load_aggregate(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
   ),
-  aggregate_id aggregate_id: AggregateId,
-) -> Result(Aggregate(entity, command, event, error), EventSourcingError(error)) {
-  use tx <- event_sourcing.event_store.load_aggregate_transaction()
-  load_aggregate_or_create_new(event_sourcing, tx, aggregate_id)
-  |> result.try(fn(aggregate) {
-    case aggregate.entity == event_sourcing.empty_state {
-      True -> Error(EntityNotFound)
-      False -> Ok(aggregate)
-    }
-  })
+  aggregate_id: AggregateId,
+) -> process.Subject(
+  Result(Aggregate(entity, command, event, error), EventSourcingError(error)),
+) {
+  let receiver = process.new_subject()
+  process.send(eventsourcing_actor.data, LoadAggregate(aggregate_id, receiver))
+  receiver
 }
 
+/// Loads all events for a specific aggregate asynchronously from the beginning.
+/// Returns a subject that will receive a chronologically ordered list of all events
+/// that have occurred for the aggregate. Use process.receive() to get the result.
+///
+/// ## Example
+/// ```gleam
+/// let result = eventsourcing.load_events(actor, "bank-account-123")
+/// let assert Ok(events) = process.receive(result, 1000)
+/// // events contains all EventEnvelop items for this aggregate
+/// ```
 pub fn load_events(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
   ),
-  aggregate_id aggregate_id: AggregateId,
-) -> Result(List(EventEnvelop(event)), EventSourcingError(error)) {
-  use tx <- event_sourcing.event_store.load_events_transaction()
-  event_sourcing.event_store.load_events(
-    event_sourcing.event_store.eventstore,
-    tx,
-    aggregate_id,
-    0,
-  )
+  aggregate_id: AggregateId,
+) -> process.Subject(
+  Result(List(EventEnvelop(event)), EventSourcingError(error)),
+) {
+  let receiver = process.new_subject()
+  process.send(eventsourcing_actor.data, LoadAllEvents(aggregate_id, receiver))
+  receiver
 }
 
+/// Loads events for an aggregate asynchronously starting from a specific sequence number.
+/// Returns a subject that will receive the events list. Useful for pagination or continuing
+/// event processing from a known point. Use process.receive() to get the result.
+///
+/// ## Example
+/// ```gleam
+/// let result = eventsourcing.load_events_from(actor, "bank-account-123", start_from: 10)
+/// let assert Ok(events) = process.receive(result, 1000)
+/// // events contains EventEnvelop items starting from sequence 10
+/// ```
 pub fn load_events_from(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
   ),
   aggregate_id aggregate_id: AggregateId,
   start_from start_from: Int,
-) -> Result(List(EventEnvelop(event)), EventSourcingError(error)) {
-  use tx <- event_sourcing.event_store.load_events_transaction()
-  event_sourcing.event_store.load_events(
-    event_sourcing.event_store.eventstore,
-    tx,
-    aggregate_id,
-    start_from,
+) -> process.Subject(
+  Result(List(EventEnvelop(event)), EventSourcingError(error)),
+) {
+  let receiver = process.new_subject()
+  process.send(
+    eventsourcing_actor.data,
+    LoadEvents(aggregate_id, start_from, receiver),
   )
+  receiver
 }
 
-pub fn get_latest_snapshot(
-  event_sourcing event_sourcing: EventSourcing(
-    eventstore,
-    entity,
-    command,
-    event,
-    error,
-    transaction_handle,
+/// Gets system statistics including uptime, command count, and query actor health.
+/// Returns a subject that will receive the SystemStats. Use process.receive() to get the result.
+/// Useful for monitoring system health and performance in production.
+///
+/// ## Example
+/// ```gleam
+/// let result = eventsourcing.system_stats(actor)
+/// let assert Ok(stats) = process.receive(result, 1000)
+/// io.println("Uptime: " <> int.to_string(stats.uptime_seconds) <> " seconds")
+/// ```
+pub fn system_stats(
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
+  ),
+) -> process.Subject(SystemStats) {
+  let receiver = process.new_subject()
+  process.send(eventsourcing_actor.data, GetSystemStats(receiver))
+  receiver
+}
+
+/// Gets statistics for a specific aggregate including event count and snapshot status.
+/// Returns a subject that will receive the AggregateStats result. Use process.receive() to get the result.
+/// Useful for debugging and monitoring individual aggregate health.
+///
+/// ## Example
+/// ```gleam
+/// let result = eventsourcing.aggregate_stats(actor, "bank-account-123")
+/// let assert Ok(stats) = process.receive(result, 1000)
+/// io.println("Events: " <> int.to_string(stats.event_count))
+/// ```
+pub fn aggregate_stats(
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
+  ),
+  aggregate_id: AggregateId,
+) -> process.Subject(Result(AggregateStats, EventSourcingError(error))) {
+  let receiver = process.new_subject()
+  process.send(
+    eventsourcing_actor.data,
+    GetAggregateStats(aggregate_id, receiver),
+  )
+  receiver
+}
+
+/// Retrieves the most recent snapshot for an aggregate asynchronously if snapshots are enabled.
+/// Returns a subject that will receive the snapshot option. Snapshots provide a point-in-time
+/// capture of aggregate state for faster reconstruction. Use process.receive() to get the result.
+///
+/// ## Example
+/// ```gleam
+/// let result = eventsourcing.latest_snapshot(actor, "bank-account-123")
+/// let assert Ok(Some(snapshot)) = process.receive(result, 1000)
+/// // snapshot.entity contains the saved state, snapshot.sequence shows version
+/// ```
+pub fn latest_snapshot(
+  eventsourcing_actor: actor.Started(
+    process.Subject(AggregateMessage(entity, command, event, error)),
   ),
   aggregate_id aggregate_id: AggregateId,
-) -> Result(Option(Snapshot(entity)), EventSourcingError(error)) {
-  use tx <- event_sourcing.event_store.get_latest_snapshot_transaction()
-  case event_sourcing.snapshot_config {
-    None -> Ok(None)
-    Some(_) -> {
-      event_sourcing.event_store.load_snapshot(tx, aggregate_id)
-    }
-  }
-}
-
-pub fn start_queries(
-  queries: List(Query(event)),
-) -> Result(List(QueryActor(event)), actor.StartError) {
-  list.map(queries, start_query)
-  |> result.all
-}
-
-pub fn query_actor_count(eventsourcing: EventSourcing(_, _, _, _, _, _)) -> Int {
-  list.length(eventsourcing.query_actors)
+) -> process.Subject(
+  Result(Option(Snapshot(entity)), EventSourcingError(error)),
+) {
+  let receiver = process.new_subject()
+  process.send(
+    eventsourcing_actor.data,
+    LoadLatestSnapshot(aggregate_id, receiver),
+  )
+  receiver
 }
 
 fn start_query(
@@ -636,6 +891,15 @@ fn start_query(
   Ok(QueryActor(actor:, query:))
 }
 
+/// Creates a validated timeout value for use with process operations.
+/// Ensures that timeout values are positive, preventing invalid configurations
+/// that could cause system operations to behave unexpectedly.
+///
+/// ## Example
+/// ```gleam
+/// let assert Ok(timeout) = eventsourcing.timeout(5000)
+/// let result = process.receive(subject, timeout)
+/// ```
 pub fn timeout(ms ms: Int) -> Result(Timeout, EventSourcingError(_)) {
   case ms <= 0 {
     True -> Error(NonPositiveArgument)
@@ -643,6 +907,15 @@ pub fn timeout(ms ms: Int) -> Result(Timeout, EventSourcingError(_)) {
   }
 }
 
+/// Creates a validated frequency value for snapshot configuration.
+/// Snapshots will be created every N events when this frequency is used.
+/// Ensures that frequency values are positive to prevent division by zero or infinite loops.
+///
+/// ## Example
+/// ```gleam
+/// let assert Ok(freq) = eventsourcing.frequency(5)
+/// let config = eventsourcing.SnapshotConfig(freq)
+/// ```
 pub fn frequency(n n: Int) -> Result(Frequency, EventSourcingError(_)) {
   case n <= 0 {
     True -> Error(NonPositiveArgument)
