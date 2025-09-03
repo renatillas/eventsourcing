@@ -265,7 +265,7 @@ pub fn main() {
     })
 
   // Register queries (required after supervisor initialization)
-  eventsourcing.register_queries(eventsourcing_actor.data, query_actors)
+  eventsourcing.register_queries(eventsourcing_actor, query_actors)
 
   // Execute commands - they will be processed asynchronously
   eventsourcing.execute(
