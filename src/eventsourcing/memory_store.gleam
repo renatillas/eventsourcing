@@ -51,10 +51,10 @@ pub type SnapshotMessage(entity) {
 
 fn supervised_events_actor(
   events_actor_receiver: process.Subject(
-    actor.Started(process.Subject(EventMessage(e))),
+    actor.Started(process.Subject(EventMessage(event))),
   ),
-  name: process.Name(EventMessage(e)),
-) -> supervision.ChildSpecification(process.Subject(EventMessage(e))) {
+  name: process.Name(EventMessage(event)),
+) -> supervision.ChildSpecification(process.Subject(EventMessage(event))) {
   supervision.worker(fn() {
     use started <- result.map(
       actor.new(dict.new())

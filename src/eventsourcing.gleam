@@ -561,9 +561,7 @@ fn on_message(
             )
           actor.continue(updated_state)
         }
-        Error(error) -> {
-          actor.stop_abnormal(describe_error(error))
-        }
+        Error(error) -> actor.stop_abnormal(describe_error(error))
       }
     }
     GetSystemStats(reply_to) -> {
