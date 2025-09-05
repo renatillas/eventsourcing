@@ -561,7 +561,16 @@ fn on_message(
             )
           actor.continue(updated_state)
         }
-        Error(error) -> actor.stop_abnormal(describe_error(error))
+        Error(error) -> {
+          // For transaction failures and retryable errors, continue instead of crashing
+          case error {
+            TransactionFailed -> {
+              // Log the transaction failure but continue processing
+              actor.continue(state)
+            }
+            _ -> actor.stop_abnormal(describe_error(error))
+          }
+        }
       }
     }
     GetSystemStats(reply_to) -> {
