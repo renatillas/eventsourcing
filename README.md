@@ -100,40 +100,42 @@ The library is built on a supervised actor architecture:
 import eventsourcing
 import eventsourcing/memory_store
 import gleam/otp/static_supervisor
+import gleam/erlang/process
 
-// 1. Set up receivers for actors
-let eventsourcing_actor_receiver = process.new_subject()
-let query_actors_receiver = process.new_subject()
+// 1. Create memory store with supervision
+let events_actor_name = process.new_name("events_actor")
+let snapshot_actor_name = process.new_name("snapshot_actor")
+let #(eventstore, memory_store_spec) = memory_store.supervised(
+  events_actor_name,
+  snapshot_actor_name, 
+  static_supervisor.OneForOne
+)
 
-// 2. Create supervised event sourcing system
-let assert Ok(memory_store) = memory_store.new()
+// 2. Start memory store supervisor
+let assert Ok(_) = static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(memory_store_spec)
+  |> static_supervisor.start()
+
+// 3. Create event sourcing system
+let name = process.new_name("eventsourcing_actor")
+let queries = [#(process.new_name("my_query"), my_query)]
 let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
-  memory_store,
+  name: name,
+  eventstore: eventstore,
   handle: my_handle,
   apply: my_apply,
   empty_state: MyEmptyState,
-  queries: [my_query],
-  eventsourcing_actor_receiver:,
-  query_actors_receiver:,
+  queries: queries,
+  snapshot_config: None
 )
 
-// 3. Start supervisor
-let assert Ok(supervisor) =
-  static_supervisor.new(static_supervisor.OneForOne)
+// 4. Start event sourcing supervisor
+let assert Ok(_supervisor) = static_supervisor.new(static_supervisor.OneForOne)
   |> static_supervisor.add(eventsourcing_spec)
   |> static_supervisor.start()
 
-// 4. Get actors from receivers
-let assert Ok(eventsourcing_actor) = 
-  process.receive(eventsourcing_actor_receiver, 2000)
-let query_actors = 
-  list.map(queries, fn(_) { 
-    let assert Ok(query_actor) = process.receive(query_actors_receiver, 1000) 
-    query_actor
-})
-
-// 5. Register query actors (required after supervisor start)
-eventsourcing.register_queries(eventsourcing_actor, query_actors)
+// 5. Get actor from name
+let eventsourcing_actor = process.named_subject(name)
 
 // 6. Execute commands
 eventsourcing.execute(eventsourcing_actor, "aggregate-123", MyCommand)
@@ -234,43 +236,48 @@ pub fn main() {
     )
   }
 
-  // Set up communication channels
-  let eventsourcing_actor_receiver = process.new_subject()
-  let query_actors_receiver = process.new_subject()
-
-  // Create supervised system
-  let assert Ok(memory_store) = memory_store.new()
-  let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
-    name: process.named("eventsourcing_actor"),
-    eventstore: memory_store,
-    handle: handle,
-    apply: apply, 
-    empty_state: UnopenedBankAccount,
-    queries: [(process.named("balance_query"), balance_query)],
-    snapshot_config: None,
+  // 1. Create memory store with supervision
+  let events_actor_name = process.new_name("events_actor")
+  let snapshot_actor_name = process.new_name("snapshot_actor")
+  let #(eventstore, memory_store_spec) = memory_store.supervised(
+    events_actor_name,
+    snapshot_actor_name,
+    static_supervisor.OneForOne
   )
 
-  // Start supervision tree
-  let assert Ok(_supervisor) =
-    static_supervisor.new(static_supervisor.OneForOne)
+  // 2. Start memory store supervisor
+  let assert Ok(_) = static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(memory_store_spec)
+    |> static_supervisor.start()
+
+  // 3. Create supervised event sourcing system
+  let name = process.new_name("eventsourcing_actor")
+  let queries = [#(process.new_name("balance_query"), balance_query)]
+  let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
+    name: name,
+    eventstore: eventstore,
+    handle: handle,
+    apply: apply,
+    empty_state: UnopenedBankAccount,
+    queries: queries,
+    snapshot_config: None
+  )
+
+  // 4. Start event sourcing supervision tree
+  let assert Ok(_supervisor) = static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(eventsourcing_spec)
     |> static_supervisor.start()
 
-  // Get actors from startup
-  let assert Ok(eventsourcing_actor) =
-    process.receive(eventsourcing_actor_receiver, 2000)
-  let assert Ok(query_actors) =
-    list.try_map([balance_query], fn(_) { 
-      process.receive(query_actors_receiver, 1000) 
-    })
+  // 5. Get actor from name
+  let eventsourcing_actor = process.named_subject(name)
 
-  // Register queries (required after supervisor initialization)
-  eventsourcing.register_queries(eventsourcing_actor, query_actors)
+  // Give time for actors to start
+  process.sleep(100)
 
-  // Execute commands - they will be processed asynchronously
+  // 6. Execute commands - they will be processed asynchronously
   eventsourcing.execute(
     eventsourcing_actor,
-    "account-123", 
+    "account-123",
     OpenAccount("account-123")
   )
   
@@ -288,28 +295,24 @@ All data operations now use an asynchronous message-passing pattern:
 
 ```gleam
 pub fn async_example() {
-  // Set up supervised system
-  let assert Ok(memory_store) = memory_store.new()
-  let eventsourcing_actor_receiver = process.new_subject()
-  let query_actors_receiver = process.new_subject()
-  
+  // Set up supervised system (memory store setup omitted for brevity)
+  let name = process.new_name("eventsourcing_actor")
   let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
-    name: process.named("eventsourcing_actor"),
-    eventstore: memory_store,
+    name: name,
+    eventstore: eventstore, // from memory_store.supervised()
     handle: handle,
     apply: apply,
     empty_state: UnopenedBankAccount,
     queries: [],
-    snapshot_config: None,
+    snapshot_config: None
   )
 
-  let assert Ok(_supervisor) =
-    static_supervisor.new(static_supervisor.OneForOne)
+  let assert Ok(_supervisor) = static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(eventsourcing_spec)
     |> static_supervisor.start()
 
-  let assert Ok(eventsourcing_actor) =
-    process.receive(eventsourcing_actor_receiver, 2000)
+  let eventsourcing_actor = process.named_subject(name)
+  process.sleep(100) // Give time for actors to start
 
   // Load aggregate state asynchronously
   let load_subject = eventsourcing.load_aggregate(eventsourcing_actor, "account-123")
@@ -338,17 +341,19 @@ let assert Ok(frequency) = eventsourcing.frequency(100)
 let snapshot_config = eventsourcing.SnapshotConfig(frequency)
 
 // Enable snapshots during supervised system setup
+let name = process.new_name("eventsourcing_actor")
 let assert Ok(eventsourcing_spec) = eventsourcing.supervised(
-  name: process.named("eventsourcing_actor"),
-  eventstore: memory_store,
+  name: name,
+  eventstore: eventstore, // from memory_store.supervised()
   handle: handle,
   apply: apply,
   empty_state: UnopenedBankAccount,
   queries: [],
-  snapshot_config: Some(snapshot_config), // Enable snapshots
+  snapshot_config: Some(snapshot_config) // Enable snapshots
 )
 
-// Load latest snapshot asynchronously
+// Get actor and load latest snapshot asynchronously
+let eventsourcing_actor = process.named_subject(name)
 let snapshot_subject = eventsourcing.latest_snapshot(eventsourcing_actor, "account-123")
 case process.receive(snapshot_subject, 1000) {
   Ok(Ok(Some(snapshot))) -> {
@@ -449,10 +454,10 @@ let assert Ok(spec) = eventsourcing.supervised(
 
 // v9.0 - Named actors required
 let assert Ok(spec) = eventsourcing.supervised(
-  name: process.named("eventsourcing_actor"),
+  name: process.new_name("eventsourcing_actor"),
   eventstore: eventstore, handle: handle, apply: apply,
   empty_state: state, 
-  queries: [(process.named("balance_query"), balance_query)],
+  queries: [#(process.new_name("balance_query"), balance_query)],
   snapshot_config: None
 )
 ```
@@ -483,11 +488,13 @@ let eventsourcing_spec = eventsourcing.supervised(
 )
 ```
 
-**2. Add Query Registration**
+**2. Query Registration (No Longer Needed)**
 
 ```gleam
 // v8.0 - Required after supervisor start
 eventsourcing.register_queries(eventsourcing_actor, query_actors)
+
+// v9.0 - Not needed! Queries are automatically registered through supervised() function
 ```
 
 **3. Update Command Execution**
