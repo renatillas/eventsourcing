@@ -5,6 +5,18 @@ All notable changes to the eventsourcing project will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.0.1] - 2025-09-05
+
+### 🔧 Bug Fixes
+
+#### Improved Transaction Error Handling
+
+- **Enhanced resilience for transaction failures** - `TransactionFailed` errors now allow actors to continue processing instead of crashing abnormally
+- **Better fault tolerance** - Temporary transaction issues no longer cause system-wide actor restarts
+- **Maintained error handling** - Other critical errors still properly stop actors for clean recovery
+
+This change improves system stability in environments where transaction failures might be intermittent or recoverable.
+
 ## [9.0.0] - 2025-09-05
 
 ### 🚨 BREAKING CHANGES
