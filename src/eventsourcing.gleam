@@ -99,6 +99,12 @@ pub type QueryMessage(event) {
 }
 
 pub type AggregateMessage(entity, command, event, error) {
+  ExecuteCommandWithResponse(
+    aggregate_id: AggregateId,
+    command: command,
+    metadata: List(#(String, String)),
+    reply_to: process.Subject(Result(Nil, EventSourcingError(error))),
+  )
   ExecuteCommand(
     aggregate_id: AggregateId,
     command: command,
@@ -351,6 +357,31 @@ pub fn supervised(
   supervisor
 }
 
+/// Same as `execute_with_metadata` but returns a subject to receive the result of the command execution.
+///
+/// ## Example
+/// ```gleam
+/// let response = eventsourcing.execute_with_response(actor, "bank-account-123", OpenAccount("123"))
+/// let assert Ok(Nil) = process.receive(response, 1000)
+/// // or...
+/// let assert Error(error) = process.receive(response, 1000)
+/// ```
+pub fn execute_with_response(
+  eventsourcing_actor: process.Subject(
+    AggregateMessage(entity, command, event, error),
+  ),
+  aggregate_id: AggregateId,
+  command: command,
+  metadata: List(#(String, String)),
+) -> process.Subject(Result(Nil, EventSourcingError(error))) {
+  let receiver = process.new_subject()
+  process.send(
+    eventsourcing_actor,
+    ExecuteCommandWithResponse(aggregate_id, command, metadata, receiver),
+  )
+  receiver
+}
+
 /// Executes a command against an aggregate in the event sourcing system.
 /// The command will be validated, events generated if successful, and the events
 /// will be persisted and sent to all registered query actors. Commands that violate
@@ -494,84 +525,10 @@ fn on_message(
       actor.continue(state)
     }
     ExecuteCommand(aggregate_id, command, metadata) -> {
-      let result = {
-        use tx <- state.event_store.execute_transaction()
-        use aggregate <- result.try(load_aggregate_or_create_new(
-          state,
-          tx,
-          aggregate_id,
-        ))
-
-        use events <- result.try(
-          state.handle(aggregate.entity, command)
-          |> result.map_error(fn(error) { DomainError(error) }),
-        )
-
-        let aggregate =
-          Aggregate(
-            ..aggregate,
-            entity: events
-              |> list.fold(aggregate.entity, fn(entity, event) {
-                state.apply(entity, event)
-              }),
-          )
-
-        use #(commited_events, sequence) <- result.try(
-          state.event_store.commit_events(tx, aggregate, events, metadata),
-        )
-
-        use _ <- result.try(case state.snapshot_config {
-          Some(config) if sequence % config.snapshot_frequency.n == 0 -> {
-            let snapshot =
-              Snapshot(
-                aggregate_id: aggregate.aggregate_id,
-                entity: aggregate.entity,
-                sequence: sequence,
-                timestamp: timestamp.system_time(),
-              )
-            state.event_store.save_snapshot(tx, snapshot)
-          }
-          _ -> Ok(Nil)
-        })
-
-        state.query_actors
-        |> list.each(fn(query) {
-          process.send(
-            process.named_subject(query),
-            ProcessEvents(aggregate_id, commited_events),
-          )
-        })
-        Ok(Nil)
-      }
-
-      case result {
-        Ok(_) -> {
-          let updated_state =
-            EventSourcing(
-              ..state,
-              commands_processed: state.commands_processed + 1,
-            )
-          actor.continue(updated_state)
-        }
-        Error(DomainError(_)) -> {
-          let updated_state =
-            EventSourcing(
-              ..state,
-              commands_processed: state.commands_processed + 1,
-            )
-          actor.continue(updated_state)
-        }
-        Error(error) -> {
-          // For transaction failures and retryable errors, continue instead of crashing
-          case error {
-            TransactionFailed -> {
-              // Log the transaction failure but continue processing
-              actor.continue(state)
-            }
-            _ -> actor.stop_abnormal(describe_error(error))
-          }
-        }
-      }
+      execute_command(state, aggregate_id, command, metadata, None)
+    }
+    ExecuteCommandWithResponse(aggregate_id, command, metadata, receiver) -> {
+      execute_command(state, aggregate_id, command, metadata, Some(receiver))
     }
     GetSystemStats(reply_to) -> {
       let stats =
@@ -639,6 +596,93 @@ fn on_message(
 
       process.send(reply_to, result)
       actor.continue(state)
+    }
+  }
+}
+
+fn execute_command(
+  state: EventSourcing(a, b, c, d, e, f),
+  aggregate_id: AggregateId,
+  command: c,
+  metadata: List(#(AggregateId, AggregateId)),
+  receiver: Option(process.Subject(Result(Nil, EventSourcingError(e)))),
+) -> actor.Next(EventSourcing(a, b, c, d, e, f), g) {
+  let result = {
+    use tx <- state.event_store.execute_transaction()
+    use aggregate <- result.try(load_aggregate_or_create_new(
+      state,
+      tx,
+      aggregate_id,
+    ))
+
+    use events <- result.try(
+      state.handle(aggregate.entity, command)
+      |> result.map_error(fn(error) { DomainError(error) }),
+    )
+
+    let aggregate =
+      Aggregate(
+        ..aggregate,
+        entity: events
+          |> list.fold(aggregate.entity, fn(entity, event) {
+            state.apply(entity, event)
+          }),
+      )
+
+    use #(commited_events, sequence) <- result.try(
+      state.event_store.commit_events(tx, aggregate, events, metadata),
+    )
+
+    use _ <- result.try(case state.snapshot_config {
+      Some(config) if sequence % config.snapshot_frequency.n == 0 -> {
+        let snapshot =
+          Snapshot(
+            aggregate_id: aggregate.aggregate_id,
+            entity: aggregate.entity,
+            sequence: sequence,
+            timestamp: timestamp.system_time(),
+          )
+        state.event_store.save_snapshot(tx, snapshot)
+      }
+      _ -> Ok(Nil)
+    })
+
+    state.query_actors
+    |> list.each(fn(query) {
+      process.send(
+        process.named_subject(query),
+        ProcessEvents(aggregate_id, commited_events),
+      )
+    })
+    Ok(Nil)
+  }
+
+  case receiver {
+    None -> Nil
+    Some(reply_to) -> {
+      process.send(reply_to, result)
+    }
+  }
+  case result {
+    Ok(_) -> {
+      let updated_state =
+        EventSourcing(..state, commands_processed: state.commands_processed + 1)
+      actor.continue(updated_state)
+    }
+    Error(DomainError(_)) -> {
+      let updated_state =
+        EventSourcing(..state, commands_processed: state.commands_processed + 1)
+      actor.continue(updated_state)
+    }
+    Error(error) -> {
+      // For transaction failures and retryable errors, continue instead of crashing
+      case error {
+        TransactionFailed -> {
+          // Log the transaction failure but continue processing
+          actor.continue(state)
+        }
+        _ -> actor.stop_abnormal(describe_error(error))
+      }
     }
   }
 }
