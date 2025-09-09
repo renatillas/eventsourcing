@@ -687,7 +687,7 @@ fn execute_command(
   }
 }
 
-fn describe_error(error: EventSourcingError(_)) -> String {
+pub fn describe_error(error: EventSourcingError(_)) -> String {
   case error {
     DomainError(domainerror) -> "Domain error: " <> string.inspect(domainerror)
     EventStoreError(msg) -> "Event store error: " <> msg
