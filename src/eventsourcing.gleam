@@ -361,7 +361,7 @@ pub fn supervised(
 ///
 /// ## Example
 /// ```gleam
-/// let response = eventsourcing.execute_with_response(actor, "bank-account-123", OpenAccount("123"))
+/// let response = eventsourcing.execute_with_response(actor, "bank-account-123", OpenAccount("123"), [#("user_id", "alice")])
 /// let assert Ok(Nil) = process.receive(response, 1000)
 /// // or...
 /// let assert Error(error) = process.receive(response, 1000)

@@ -137,6 +137,77 @@ pub fn basic_command_execution_test() {
   let assert Ok(#("test-001", 1)) = process.receive(query_results, 1000)
 }
 
+pub fn basic_command_execution_with_response_test() {
+  let events_actor_name = process.new_name("events_actor")
+  let snapshot_actor_name = process.new_name("snapshot_actor")
+  let #(eventstore, child_spec) =
+    memory_store.supervised(
+      events_actor_name,
+      snapshot_actor_name,
+      static_supervisor.OneForOne,
+    )
+
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(child_spec)
+    |> static_supervisor.start()
+
+  let query_results = process.new_subject()
+  let queries = [
+    #(process.new_name("basic-commands-query"), fn(aggregate_id, events) {
+      process.send(query_results, #(aggregate_id, list.length(events)))
+    }),
+  ]
+
+  let name = process.new_name("basic-commands-eventsourcing")
+  let assert Ok(eventsourcing_spec) =
+    eventsourcing.supervised(
+      name:,
+      eventstore:,
+      handle: example_bank_account.handle,
+      apply: example_bank_account.apply,
+      empty_state: example_bank_account.UnopenedBankAccount,
+      queries:,
+      snapshot_config: None,
+    )
+
+  let assert Ok(_supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(eventsourcing_spec)
+    |> static_supervisor.start()
+
+  let eventsourcing = process.named_subject(name)
+
+  process.sleep(100)
+
+  // Open account
+  let response =
+    eventsourcing.execute_with_response(
+      eventsourcing,
+      "test-001",
+      example_bank_account.OpenAccount("test-001"),
+      [],
+    )
+  let assert Ok(Ok(Nil)) = process.receive(response, 1000)
+  let assert Ok(#("test-001", 1)) = process.receive(query_results, 1000)
+
+  // Deposit money
+  eventsourcing.execute(
+    eventsourcing,
+    "test-001",
+    example_bank_account.DepositMoney(100.0),
+  )
+  let assert Ok(#("test-001", 1)) = process.receive(query_results, 1000)
+
+  // Withdraw money
+  eventsourcing.execute(
+    eventsourcing,
+    "test-001",
+    example_bank_account.WithDrawMoney(50.0),
+  )
+  let assert Ok(#("test-001", 1)) = process.receive(query_results, 1000)
+}
+
 pub fn aggregate_loading_test() {
   let events_actor_name = process.new_name("events_actor")
   let snapshot_actor_name = process.new_name("snapshot_actor")
