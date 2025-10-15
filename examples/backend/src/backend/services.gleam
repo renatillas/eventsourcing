@@ -17,7 +17,6 @@ pub type ServiceConfig {
   ServiceConfig(websocket_broadcaster: process.Subject(banking.AccountView))
 }
 
-
 /// Messages for WebSocket broadcaster actor
 pub type BroadcasterMsg {
   AddClient(String, process.Subject(WebSocketClientMsg))
@@ -41,7 +40,7 @@ type ViewActorMessage {
 }
 
 /// Start banking services
-pub fn start_banking_services(
+pub fn start_event_store(
   _config: ServiceConfig,
 ) -> Result(
   #(
@@ -60,13 +59,7 @@ pub fn start_banking_services(
       static_supervisor.OneForOne,
     )
 
-  // Create combined supervisor for all services
-  let services_supervisor =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(command_memory_spec)
-    |> static_supervisor.supervised()
-
-  Ok(#(command_eventstore, services_supervisor))
+  Ok(#(command_eventstore, command_memory_spec))
 }
 
 /// Start the main event sourcing command processor
@@ -84,7 +77,7 @@ pub fn start_command_processor(
   ),
   a,
 ) {
-  let es_name = process.new_name("banking-command-processor")
+  let banking_command_processor = process.new_name("banking-command-processor")
   let assert Ok(actor) =
     actor.new(dict.new())
     |> actor.on_message(fn(state, msg) {
@@ -147,9 +140,9 @@ pub fn start_command_processor(
     })
     |> actor.start()
 
-  let assert Ok(es_spec) =
+  let assert Ok(eventsourcing_spec) =
     eventsourcing.supervised(
-      name: es_name,
+      name: banking_command_processor,
       eventstore: eventstore,
       handle: banking.handle,
       apply: banking.apply,
@@ -193,9 +186,8 @@ pub fn start_command_processor(
 
   let assert Ok(_es_sup) =
     static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(es_spec)
+    |> static_supervisor.add(eventsourcing_spec)
     |> static_supervisor.start()
 
-  Ok(process.named_subject(es_name))
+  Ok(process.named_subject(banking_command_processor))
 }
-

@@ -661,13 +661,12 @@ pub fn view(model: Model) -> element.Element(Msg) {
     render_account_selector(model),
     render_account_details(model),
     render_transaction_controls(model),
-    render_transaction_history(model),
   ])
 }
 
 fn render_header(_model: Model) -> element.Element(Msg) {
   html.div([attribute.class("header")], [
-    html.h1([], [element.text("Real-time Banking with eventsourcing_glyn")]),
+    html.h1([], [element.text("Real-time Banking")]),
     html.p([], [
       element.text(
         "Demonstrating distributed event sourcing with WebSocket integration",
@@ -812,27 +811,6 @@ fn render_transaction_controls(model: Model) -> element.Element(Msg) {
       ])
     None -> element.text("")
   }
-}
-
-fn render_transaction_history(model: Model) -> element.Element(Msg) {
-  let transaction_items =
-    list.map(model.recent_transactions, fn(transaction) {
-      html.li([], [
-        element.text(
-          transaction.transaction_type
-          <> ": $"
-          <> float.to_string(transaction.amount),
-        ),
-        element.text(
-          " → Balance: $" <> float.to_string(transaction.new_balance),
-        ),
-      ])
-    })
-
-  html.div([attribute.class("transaction-history")], [
-    html.h3([], [element.text("Recent Transactions")]),
-    html.ul([], transaction_items),
-  ])
 }
 
 // Effect functions for WebSocket communication
