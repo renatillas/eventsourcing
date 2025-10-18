@@ -2,21 +2,23 @@
 marp: true
 theme: default
 paginate: true
-backgroundColor: #fefefc
-color: #292d3e
+backgroundColor: #292d3e
+color: #F0EEFF
 style: |
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@700&display=swap');
 
   section {
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    background-color: #fefefc;
-    color: #292d3e;
+    font-family: 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #292d3e;
+    color: #F0EEFF;
     padding: 60px 80px;
     font-size: 24px;
     line-height: 1.6;
   }
 
   h1 {
+    font-family: 'Lexend', 'Outfit', sans-serif;
     color: #ffaff3;
     font-size: 3.5em;
     font-weight: 700;
@@ -26,7 +28,8 @@ style: |
   }
 
   h2 {
-    color: #584355;
+    font-family: 'Lexend', 'Outfit', sans-serif;
+    color: #a6f0fc;
     font-size: 2em;
     font-weight: 600;
     margin-top: 0.5em;
@@ -36,7 +39,8 @@ style: |
   }
 
   h3 {
-    color: #292d3e;
+    font-family: 'Outfit', sans-serif;
+    color: #F0EEFF;
     font-size: 1.4em;
     font-weight: 600;
     margin-top: 1em;
@@ -44,18 +48,18 @@ style: |
   }
 
   code {
-    background-color: #fffbe8;
-    color: #584355;
+    background-color: #2f2f2f;
+    color: #ffaff3;
     padding: 2px 8px;
-    border-radius: 4px;
-    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+    border-radius: 0.3rem;
+    font-family: 'Cascadia Mono', 'SF Mono', 'Monaco', monospace;
     font-size: 0.9em;
   }
 
   pre {
-    background-color: #fffbe8;
-    border: 2px solid #ffaff3;
-    border-radius: 12px;
+    background-color: #1e1e1e;
+    border: 2px solid #616682;
+    border-radius: 0.6rem;
     padding: 24px;
     margin: 20px 0;
     overflow-x: auto;
@@ -63,7 +67,7 @@ style: |
 
   pre code {
     background-color: transparent;
-    color: #292d3e;
+    color: #F0EEFF;
     padding: 0;
     font-size: 0.75em;
     line-height: 1.5;
@@ -75,15 +79,15 @@ style: |
   }
 
   a {
-    color: #ffaff3;
+    color: #a6f0fc;
     text-decoration: none;
-    border-bottom: 2px solid #ffaff3;
+    border-bottom: 2px solid #a6f0fc;
     transition: all 0.2s;
   }
 
   a:hover {
-    color: #584355;
-    border-bottom-color: #584355;
+    color: #ffaff3;
+    border-bottom-color: #ffaff3;
   }
 
   ul, ol {
@@ -108,6 +112,7 @@ style: |
   }
 
   section.lead h1 {
+    font-family: 'Lexend', 'Outfit', sans-serif;
     font-size: 4.5em;
     background: linear-gradient(135deg, #ffaff3 0%, #a6f0fc 100%);
     -webkit-background-clip: text;
@@ -116,32 +121,46 @@ style: |
   }
 
   section.lead h2 {
-    color: #584355;
+    color: #a6f0fc;
     border: none;
     font-size: 1.8em;
   }
 
   section.lead h3 {
-    color: #292d3e;
+    color: #F0EEFF;
     font-size: 1.2em;
     font-weight: 400;
   }
 
-  footer {
-    color: #584355;
-    font-size: 0.8em;
-  }
-
   header {
-    color: #584355;
+    color: #616682;
   }
 
   blockquote {
     border-left: 4px solid #ffaff3;
     padding-left: 20px;
     margin-left: 0;
-    color: #584355;
+    color: #a6f0fc;
     font-style: italic;
+  }
+
+  /* Wavy bottom decoration */
+  section::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 80px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M0,0 C150,80 350,80 600,40 C850,0 1050,0 1200,40 L1200,120 L0,120 Z' fill='%23ffaff3' fill-opacity='0.1'/%3E%3C/svg%3E");
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: bottom;
+    pointer-events: none;
+  }
+
+  section.lead::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M0,0 C150,80 350,80 600,40 C850,0 1050,0 1200,40 L1200,120 L0,120 Z' fill='%23a6f0fc' fill-opacity='0.1'/%3E%3Cpath d='M0,20 C200,100 400,60 600,60 C800,60 1000,100 1200,60 L1200,120 L0,120 Z' fill='%23ffaff3' fill-opacity='0.08'/%3E%3C/svg%3E");
   }
 ---
 

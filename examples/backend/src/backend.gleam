@@ -53,7 +53,7 @@ fn start_banking_system() -> Result(Nil, String) {
 
   // Start banking services with broadcaster
   use #(command_eventstore, services_supervisor_spec) <- result.try(
-    services.start_banking_services(service_config),
+    services.start_event_store(service_config),
   )
 
   // Start services supervisor
@@ -68,10 +68,7 @@ fn start_banking_system() -> Result(Nil, String) {
 
   // Start command processor with WebSocket broadcaster integration
   use command_processor <- result.try(
-    services.start_command_processor(
-      command_eventstore,
-      broadcaster_actor,
-    )
+    services.start_command_processor(command_eventstore, broadcaster_actor)
     |> result.map_error(fn(_) { "Failed to start command processor" }),
   )
 

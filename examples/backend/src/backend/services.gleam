@@ -78,67 +78,7 @@ pub fn start_command_processor(
   a,
 ) {
   let banking_command_processor = process.new_name("banking-command-processor")
-  let assert Ok(actor) =
-    actor.new(dict.new())
-    |> actor.on_message(fn(state, msg) {
-      case msg {
-        AccountEvent(account_id, event) -> {
-          let current_events = case dict.get(state, account_id) {
-            Ok(view) -> view
-            Error(Nil) -> banking.AccountView("", "", 0.0, 0)
-          }
-          let state = case event {
-            banking.AccountOpened(_, account_holder) -> {
-              let new_view =
-                banking.AccountView(
-                  account_id: account_id,
-                  account_holder: account_holder,
-                  balance: 0.0,
-                  last_updated: timestamp.system_time()
-                    |> timestamp.to_unix_seconds
-                    |> float.round,
-                )
-              dict.insert(state, account_id, new_view)
-            }
-            banking.CustomerDepositedCash(_, new_balance) -> {
-              let new_view =
-                banking.AccountView(
-                  account_id: account_id,
-                  account_holder: current_events.account_holder,
-                  balance: new_balance,
-                  last_updated: timestamp.system_time()
-                    |> timestamp.to_unix_seconds
-                    |> float.round,
-                )
-              dict.insert(state, account_id, new_view)
-            }
-            banking.CustomerWithdrewCash(_, new_balance) -> {
-              let new_view =
-                banking.AccountView(
-                  account_id: account_id,
-                  account_holder: current_events.account_holder,
-                  balance: new_balance,
-                  last_updated: timestamp.system_time()
-                    |> timestamp.to_unix_seconds
-                    |> float.round,
-                )
-              dict.insert(state, account_id, new_view)
-            }
-            banking.AccountClosed -> dict.delete(state, account_id)
-          }
-          actor.continue(state)
-        }
-        GetAccountView(account_id, receiver) -> {
-          let view = case dict.get(state, account_id) {
-            Ok(view) -> view
-            Error(Nil) -> banking.AccountView("", "", 0.0, 0)
-          }
-          process.send(receiver, view)
-          actor.continue(state)
-        }
-      }
-    })
-    |> actor.start()
+  let assert Ok(actor) = new_view_actor()
 
   let assert Ok(eventsourcing_spec) =
     eventsourcing.supervised(
@@ -190,4 +130,70 @@ pub fn start_command_processor(
     |> static_supervisor.start()
 
   Ok(process.named_subject(banking_command_processor))
+}
+
+fn new_view_actor() -> Result(
+  actor.Started(process.Subject(ViewActorMessage)),
+  actor.StartError,
+) {
+  actor.new(dict.new())
+  |> actor.on_message(fn(state, msg) {
+    case msg {
+      AccountEvent(account_id, event) -> {
+        let current_events = case dict.get(state, account_id) {
+          Ok(view) -> view
+          Error(Nil) -> banking.AccountView("", "", 0.0, 0)
+        }
+        let state = case event {
+          banking.AccountOpened(_, account_holder) -> {
+            let new_view =
+              banking.AccountView(
+                account_id: account_id,
+                account_holder: account_holder,
+                balance: 0.0,
+                last_updated: timestamp.system_time()
+                  |> timestamp.to_unix_seconds
+                  |> float.round,
+              )
+            dict.insert(state, account_id, new_view)
+          }
+          banking.CustomerDepositedCash(_, new_balance) -> {
+            let new_view =
+              banking.AccountView(
+                account_id: account_id,
+                account_holder: current_events.account_holder,
+                balance: new_balance,
+                last_updated: timestamp.system_time()
+                  |> timestamp.to_unix_seconds
+                  |> float.round,
+              )
+            dict.insert(state, account_id, new_view)
+          }
+          banking.CustomerWithdrewCash(_, new_balance) -> {
+            let new_view =
+              banking.AccountView(
+                account_id: account_id,
+                account_holder: current_events.account_holder,
+                balance: new_balance,
+                last_updated: timestamp.system_time()
+                  |> timestamp.to_unix_seconds
+                  |> float.round,
+              )
+            dict.insert(state, account_id, new_view)
+          }
+          banking.AccountClosed -> dict.delete(state, account_id)
+        }
+        actor.continue(state)
+      }
+      GetAccountView(account_id, receiver) -> {
+        let view = case dict.get(state, account_id) {
+          Ok(view) -> view
+          Error(Nil) -> banking.AccountView("", "", 0.0, 0)
+        }
+        process.send(receiver, view)
+        actor.continue(state)
+      }
+    }
+  })
+  |> actor.start()
 }
