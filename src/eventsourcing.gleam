@@ -86,9 +86,16 @@ pub type Apply(entity, event) =
 pub type Handle(entity, command, event, error) =
   fn(entity, command) -> Result(List(event), error)
 
-@internal
-pub type Query(event) =
-  fn(AggregateId, List(EventEnvelop(event))) -> Nil
+pub type QueryType(entity, event) {
+  EventOnly(
+    name: process.Name(QueryMessage(event)),
+    query: fn(AggregateId, List(EventEnvelop(event))) -> Nil,
+  )
+  StateOnly(
+    name: process.Name(StateQueryMessage(entity)),
+    query: fn(AggregateId, entity) -> Nil,
+  )
+}
 
 pub type QueryActor(event) {
   QueryActor(actor: process.Subject(QueryMessage(event)))
@@ -96,6 +103,10 @@ pub type QueryActor(event) {
 
 pub type QueryMessage(event) {
   ProcessEvents(aggregate_id: AggregateId, events: List(EventEnvelop(event)))
+}
+
+pub type StateQueryMessage(entity) {
+  ProcessState(aggregate_id: AggregateId, entity: entity)
 }
 
 pub type AggregateMessage(entity, command, event, error) {
@@ -199,7 +210,8 @@ pub opaque type EventSourcing(
       error,
       transaction_handle,
     ),
-    query_actors: List(process.Name(QueryMessage(event))),
+    event_query_actors: List(process.Name(QueryMessage(event))),
+    state_query_actors: List(process.Name(StateQueryMessage(entity))),
     handle: Handle(entity, command, event, error),
     apply: Apply(entity, event),
     empty_state: entity,
@@ -295,7 +307,7 @@ pub type AggregateActorState(
 /// let #(store, _) = memory_store.supervised(events_name, snapshot_name, static_supervisor.OneForOne)
 /// 
 /// // Then create event sourcing system
-/// let balance_query = #(process.new_name("balance_query"), fn(aggregate_id, events) { /* update read model */ })
+/// let balance_query = eventsourcing.EventOnly(name: process.new_name("balance_query"), query: fn(aggregate_id, events) { /* update read model */ })
 /// let assert Ok(spec) = eventsourcing.supervised(
 ///   name: process.new_name("eventsourcing_actor"),
 ///   eventstore: store,
@@ -319,17 +331,37 @@ pub fn supervised(
   handle handle: Handle(entity, command, event, error),
   apply apply: Apply(entity, event),
   empty_state empty_state: entity,
-  queries queries: List(#(process.Name(QueryMessage(event)), Query(event))),
+  queries queries: List(QueryType(entity, event)),
   snapshot_config snapshot_config: Option(SnapshotConfig),
 ) -> Result(supervision.ChildSpecification(static_supervisor.Supervisor), Nil) {
-  // Create a single coordinator that manages everything properly under supervision
-  let queries =
-    list.map(queries, fn(query) {
-      let #(name, query) = query
-      #(name, supervision.worker(fn() { start_query(name, query) }))
+  // Split queries by variant and create worker specs
+  let event_query_specs =
+    list.filter_map(queries, fn(q) {
+      case q {
+        EventOnly(name, query) ->
+          Ok(#(
+            name,
+            supervision.worker(fn() { start_event_query(name, query) }),
+          ))
+        _ -> Error(Nil)
+      }
     })
-  let names = list.map(queries, fn(query) { query.0 })
-  let specs = list.map(queries, fn(query) { query.1 })
+  let state_query_specs =
+    list.filter_map(queries, fn(q) {
+      case q {
+        StateOnly(name, query) ->
+          Ok(#(
+            name,
+            supervision.worker(fn() { start_state_query(name, query) }),
+          ))
+        _ -> Error(Nil)
+      }
+    })
+
+  let event_query_names = list.map(event_query_specs, fn(q) { q.0 })
+  let state_query_names = list.map(state_query_specs, fn(q) { q.0 })
+  let event_specs = list.map(event_query_specs, fn(q) { q.1 })
+  let state_specs = list.map(state_query_specs, fn(q) { q.1 })
 
   let eventsourcing_spec =
     supervision.worker(fn() {
@@ -337,7 +369,8 @@ pub fn supervised(
         name:,
         eventstore: eventstore,
         handle: handle,
-        query_actors: names,
+        event_query_actors: event_query_names,
+        state_query_actors: state_query_names,
         apply: apply,
         empty_state: empty_state,
         snapshot_config:,
@@ -348,7 +381,10 @@ pub fn supervised(
   let supervisor =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(eventsourcing_spec)
-    |> list.fold(specs, _, fn(supervisor, spec) {
+    |> list.fold(event_specs, _, fn(supervisor, spec) {
+      static_supervisor.add(supervisor, spec)
+    })
+    |> list.fold(state_specs, _, fn(supervisor, spec) {
       static_supervisor.add(supervisor, spec)
     })
     |> static_supervisor.supervised()
@@ -436,7 +472,8 @@ fn start(
     transaction_handle,
   ),
   handle handle: Handle(entity, command, event, error),
-  query_actors query_actors,
+  event_query_actors event_query_actors,
+  state_query_actors state_query_actors,
   apply apply: Apply(entity, event),
   empty_state empty_state: entity,
   snapshot_config snapshot_config: Option(SnapshotConfig),
@@ -445,7 +482,8 @@ fn start(
 ) {
   actor.new(EventSourcing(
     event_store: eventstore,
-    query_actors:,
+    event_query_actors:,
+    state_query_actors:,
     handle: handle,
     apply: apply,
     empty_state: empty_state,
@@ -533,7 +571,8 @@ fn on_message(
     GetSystemStats(reply_to) -> {
       let stats =
         SystemStats(
-          query_actors_count: list.length(state.query_actors),
+          query_actors_count: list.length(state.event_query_actors)
+            + list.length(state.state_query_actors),
           total_commands_processed: state.commands_processed,
         )
 
@@ -647,11 +686,19 @@ fn execute_command(
       _ -> Ok(Nil)
     })
 
-    state.query_actors
+    state.event_query_actors
     |> list.each(fn(query) {
       process.send(
         process.named_subject(query),
         ProcessEvents(aggregate_id, commited_events),
+      )
+    })
+
+    state.state_query_actors
+    |> list.each(fn(query) {
+      process.send(
+        process.named_subject(query),
+        ProcessState(aggregate_id, aggregate.entity),
       )
     })
     Ok(Nil)
@@ -880,12 +927,32 @@ pub fn latest_snapshot(
   receiver
 }
 
-fn start_query(name: process.Name(QueryMessage(event)), query: Query(event)) {
+fn start_event_query(
+  name: process.Name(QueryMessage(event)),
+  query: fn(AggregateId, List(EventEnvelop(event))) -> Nil,
+) {
   actor.new(Nil)
   |> actor.on_message(fn(_, message) {
     case message {
       ProcessEvents(aggregate_id, events) -> {
         query(aggregate_id, events)
+        actor.continue(Nil)
+      }
+    }
+  })
+  |> actor.named(name)
+  |> actor.start()
+}
+
+fn start_state_query(
+  name: process.Name(StateQueryMessage(entity)),
+  query: fn(AggregateId, entity) -> Nil,
+) {
+  actor.new(Nil)
+  |> actor.on_message(fn(_, message) {
+    case message {
+      ProcessState(aggregate_id, entity) -> {
+        query(aggregate_id, entity)
         actor.continue(Nil)
       }
     }

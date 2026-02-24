@@ -61,30 +61,39 @@ The example shows different subscriber patterns:
 ```gleam
 // Real-time subscriber - gets all events immediately
 let realtime_queries = [
-  #(process.new_name("balance-realtime"), fn(aggregate_id, events) {
-    // Update balance immediately for WebSocket clients
-    broadcast_balance_update(aggregate_id, calculate_balance(events))
-  }),
+  eventsourcing.EventOnly(
+    name: process.new_name("balance-realtime"),
+    query: fn(aggregate_id, events) {
+      // Update balance immediately for WebSocket clients
+      broadcast_balance_update(aggregate_id, calculate_balance(events))
+    },
+  ),
 ]
 
-// Batch subscriber - processes events in batches for efficiency  
+// Batch subscriber - processes events in batches for efficiency
 let batch_queries = [
-  #(process.new_name("audit-batch"), fn(aggregate_id, events) {
-    // Process multiple events together for audit logging
-    batch_audit_events(aggregate_id, events)
-  }),
+  eventsourcing.EventOnly(
+    name: process.new_name("audit-batch"),
+    query: fn(aggregate_id, events) {
+      // Process multiple events together for audit logging
+      batch_audit_events(aggregate_id, events)
+    },
+  ),
 ]
 
 // Snapshot-aware subscriber - requests snapshots on startup
 let snapshot_queries = [
-  #(process.new_name("transaction-history"), fn(aggregate_id, events) {
-    // Request snapshot if this is the first event we're seeing
-    case is_first_event(aggregate_id) {
-      True -> request_snapshot(aggregate_id)
-      False -> Nil
-    }
-    update_transaction_history(aggregate_id, events)
-  }),
+  eventsourcing.EventOnly(
+    name: process.new_name("transaction-history"),
+    query: fn(aggregate_id, events) {
+      // Request snapshot if this is the first event we're seeing
+      case is_first_event(aggregate_id) {
+        True -> request_snapshot(aggregate_id)
+        False -> Nil
+      }
+      update_transaction_history(aggregate_id, events)
+    },
+  ),
 ]
 ```
 
@@ -102,15 +111,18 @@ eventsourcing.execute(
 
 // WebSocket service subscribes to events and broadcasts to clients
 let websocket_queries = [
-  #(process.new_name("websocket-broadcaster"), fn(aggregate_id, events) {
-    list.each(connected_clients, fn(client) {
-      case client.subscribed_accounts {
-        accounts if list.contains(accounts, aggregate_id) ->
-          websocket.send(client.connection, json.encode(events))
-        _ -> Nil
-      }
-    })
-  }),
+  eventsourcing.EventOnly(
+    name: process.new_name("websocket-broadcaster"),
+    query: fn(aggregate_id, events) {
+      list.each(connected_clients, fn(client) {
+        case client.subscribed_accounts {
+          accounts if list.contains(accounts, aggregate_id) ->
+            websocket.send(client.connection, json.encode(events))
+          _ -> Nil
+        }
+      })
+    },
+  ),
 ]
 ```
 

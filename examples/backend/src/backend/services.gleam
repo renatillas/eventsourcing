@@ -88,9 +88,9 @@ pub fn start_command_processor(
       apply: banking.apply,
       empty_state: banking.UnopenedBankAccount,
       queries: [
-        #(
-          process.new_name("websocket-broadcaster"),
-          fn(
+        eventsourcing.EventOnly(
+          name: process.new_name("websocket-broadcaster"),
+          query: fn(
             account_id: String,
             events: List(eventsourcing.EventEnvelop(banking.Event)),
           ) -> Nil {

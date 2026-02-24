@@ -29,9 +29,15 @@ pub fn supervised_architecture_test() {
 
   let query_executed_subject = process.new_subject()
   let queries = [
-    #(process.new_name("query_actor"), fn(aggregate_id, events) {
-      process.send(query_executed_subject, #(aggregate_id, list.length(events)))
-    }),
+    eventsourcing.EventOnly(
+      name: process.new_name("query_actor"),
+      query: fn(aggregate_id, events) {
+        process.send(query_executed_subject, #(
+          aggregate_id,
+          list.length(events),
+        ))
+      },
+    ),
   ]
 
   let name = process.new_name("eventsourcing_actor")
@@ -86,9 +92,12 @@ pub fn basic_command_execution_test() {
 
   let query_results = process.new_subject()
   let queries = [
-    #(process.new_name("basic-commands-query"), fn(aggregate_id, events) {
-      process.send(query_results, #(aggregate_id, list.length(events)))
-    }),
+    eventsourcing.EventOnly(
+      name: process.new_name("basic-commands-query"),
+      query: fn(aggregate_id, events) {
+        process.send(query_results, #(aggregate_id, list.length(events)))
+      },
+    ),
   ]
 
   let name = process.new_name("basic-commands-eventsourcing")
@@ -154,9 +163,12 @@ pub fn basic_command_execution_with_response_test() {
 
   let query_results = process.new_subject()
   let queries = [
-    #(process.new_name("basic-commands-query"), fn(aggregate_id, events) {
-      process.send(query_results, #(aggregate_id, list.length(events)))
-    }),
+    eventsourcing.EventOnly(
+      name: process.new_name("basic-commands-query"),
+      query: fn(aggregate_id, events) {
+        process.send(query_results, #(aggregate_id, list.length(events)))
+      },
+    ),
   ]
 
   let name = process.new_name("basic-commands-eventsourcing")
@@ -416,34 +428,46 @@ pub fn multiple_query_actors_test() {
   let query3_results = process.new_subject()
 
   let queries = [
-    #(process.new_name("query1"), fn(aggregate_id, events) {
-      process.send(query1_results, #(
-        "query1",
-        aggregate_id,
-        list.length(events),
-      ))
-    }),
-    #(process.new_name("query2"), fn(aggregate_id, events) {
-      process.send(query1_results, #(
-        "query1",
-        aggregate_id,
-        list.length(events),
-      ))
-    }),
-    #(process.new_name("query3"), fn(aggregate_id, events) {
-      process.send(query2_results, #(
-        "query2",
-        aggregate_id,
-        list.length(events),
-      ))
-    }),
-    #(process.new_name("query4"), fn(aggregate_id, events) {
-      process.send(query3_results, #(
-        "query3",
-        aggregate_id,
-        list.length(events),
-      ))
-    }),
+    eventsourcing.EventOnly(
+      name: process.new_name("query1"),
+      query: fn(aggregate_id, events) {
+        process.send(query1_results, #(
+          "query1",
+          aggregate_id,
+          list.length(events),
+        ))
+      },
+    ),
+    eventsourcing.EventOnly(
+      name: process.new_name("query2"),
+      query: fn(aggregate_id, events) {
+        process.send(query1_results, #(
+          "query1",
+          aggregate_id,
+          list.length(events),
+        ))
+      },
+    ),
+    eventsourcing.EventOnly(
+      name: process.new_name("query3"),
+      query: fn(aggregate_id, events) {
+        process.send(query2_results, #(
+          "query2",
+          aggregate_id,
+          list.length(events),
+        ))
+      },
+    ),
+    eventsourcing.EventOnly(
+      name: process.new_name("query4"),
+      query: fn(aggregate_id, events) {
+        process.send(query3_results, #(
+          "query3",
+          aggregate_id,
+          list.length(events),
+        ))
+      },
+    ),
   ]
 
   let name = process.new_name("multi-query-eventsourcing")
@@ -567,9 +591,12 @@ pub fn multiple_aggregates_test() {
 
   let query_results = process.new_subject()
   let queries = [
-    #(process.new_name("multi-aggregate-query"), fn(aggregate_id, events) {
-      process.send(query_results, #(aggregate_id, list.length(events)))
-    }),
+    eventsourcing.EventOnly(
+      name: process.new_name("multi-aggregate-query"),
+      query: fn(aggregate_id, events) {
+        process.send(query_results, #(aggregate_id, list.length(events)))
+      },
+    ),
   ]
 
   let name = process.new_name("multi-aggregate-eventsourcing")
@@ -809,9 +836,9 @@ pub fn concurrent_operations_test() {
 
   let query_counter = process.new_subject()
   let queries = [
-    #(
-      process.new_name("concurrent-operations-query"),
-      fn(_aggregate_id, events) {
+    eventsourcing.EventOnly(
+      name: process.new_name("concurrent-operations-query"),
+      query: fn(_aggregate_id, events) {
         list.each(events, fn(_) { process.send(query_counter, 1) })
       },
     ),
@@ -852,6 +879,70 @@ pub fn concurrent_operations_test() {
   // Count processed events 
   let event_count = count_events(query_counter, 0, 10)
   assert event_count == 10
+}
+
+pub fn state_only_query_test() {
+  let events_actor_name = process.new_name("events_actor")
+  let snapshot_actor_name = process.new_name("snapshot_actor")
+  let #(eventstore, child_spec) =
+    memory_store.supervised(
+      events_actor_name,
+      snapshot_actor_name,
+      static_supervisor.OneForOne,
+    )
+
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(child_spec)
+    |> static_supervisor.start()
+
+  let state_subject = process.new_subject()
+  let queries = [
+    eventsourcing.StateOnly(
+      name: process.new_name("state-query"),
+      query: fn(aggregate_id, entity: example_bank_account.BankAccount) {
+        process.send(state_subject, #(aggregate_id, entity))
+      },
+    ),
+  ]
+
+  let name = process.new_name("state-query-eventsourcing")
+  let assert Ok(eventsourcing_spec) =
+    eventsourcing.supervised(
+      name:,
+      eventstore:,
+      handle: example_bank_account.handle,
+      apply: example_bank_account.apply,
+      empty_state: example_bank_account.UnopenedBankAccount,
+      queries:,
+      snapshot_config: None,
+    )
+
+  let assert Ok(_supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(eventsourcing_spec)
+    |> static_supervisor.start()
+
+  let eventsourcing = process.named_subject(name)
+  process.sleep(100)
+
+  // Open account — state query should receive updated entity
+  eventsourcing.execute(
+    eventsourcing,
+    "state-test",
+    example_bank_account.OpenAccount("state-test"),
+  )
+  let assert Ok(#("state-test", example_bank_account.BankAccount(0.0))) =
+    process.receive(state_subject, 1000)
+
+  // Deposit — state query should receive entity with new balance
+  eventsourcing.execute(
+    eventsourcing,
+    "state-test",
+    example_bank_account.DepositMoney(250.0),
+  )
+  let assert Ok(#("state-test", example_bank_account.BankAccount(250.0))) =
+    process.receive(state_subject, 1000)
 }
 
 fn count_events(
